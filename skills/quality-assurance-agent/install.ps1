@@ -112,7 +112,7 @@ $ShShim = Join-Path $BinDir "ming-qa"
 $ShContent = @"
 #!/usr/bin/env sh
 set -eu
-script_dir=`$(CDPATH= cd -- "`$(dirname -- "`$0")/.." && pwd)
+script_dir=`$(CDPATH='' cd -- "`$(dirname -- "`$0")/.." && pwd)
 if [ -n "`${PYTHON:-}" ]; then
   python_bin="`$PYTHON"
 elif command -v python3 >/dev/null 2>&1; then

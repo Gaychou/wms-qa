@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-skill_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+skill_root=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 cli="$skill_root/scripts/qa_agent.py"
 
 if [ -n "${PYTHON:-}" ]; then

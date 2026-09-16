@@ -28,8 +28,8 @@
 git clone https://github.com/mingdui/ming-qa.git
 cd ming-qa
 
-# 跑测试（104 个用例）
 cd skills/quality-assurance-agent
+python -m pip install -r requirements-dev.txt   # 只有 pytest，运行时零依赖
 python -m pytest tests/ -q
 ```
 
@@ -48,6 +48,7 @@ CI 会跑以下检查，建议本地先跑一遍：
 
 ```bash
 cd skills/quality-assurance-agent
+python -m pip install -r requirements-dev.txt
 python -m py_compile scripts/qa_agent.py
 python -m pytest tests/ -q
 sh -n install.sh
