@@ -1,5 +1,9 @@
 {
   "name": "ming-qa",
   "description": "端到端 QA 验收编排器：上下文收集 → 风险分析 → 用例设计 → 脚本生成 → 执行修复 → 代码审查 → 报告",
-  "version": "2.0.0"
+  "version": "2.0.0",
+  "author": {
+    "name": "mingdui",
+    "url": "https://github.com/mingdui"
+  }
 }

@@ -3,6 +3,7 @@
   "owner": {
     "name": "mingdui"
   },
+  "description": "端到端 QA 验收编排器：从上下文收集推进到报告收口，只在用例确认处停下",
   "plugins": [
     {
       "name": "ming-qa",
