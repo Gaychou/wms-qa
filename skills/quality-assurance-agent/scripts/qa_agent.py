@@ -751,9 +751,16 @@ def run_cmd(
 
 
 def git_output(repo: Path, args: list[str], timeout: int = 60) -> str:
+    """执行 git 命令并返回 stdout；命令失败时返回空字符串。
+
+    失败时**不能**把 stderr 当作输出返回——所有调用方都把它当文件名、分支名
+    或 diff 内容使用，混入 "fatal: not a git repository" 这类错误文本会产生
+    非法路径。在 Windows + Python 3.9 上 Path.resolve() 会因此抛 OSError
+    （3.11 起不再抛），从而中断整个风险扫描。
+    """
     result = run_cmd(["git", *args], repo, timeout=timeout)
     if result["exitCode"] != 0:
-        return result.get("stderr") or result.get("stdout") or ""
+        return ""
     return result.get("stdout", "")
 
 
@@ -3419,7 +3426,12 @@ def _risk_candidate_files(
         item = item.strip().strip('"')
         if not item:
             continue
-        path = (repo / item).resolve() if not Path(item).is_absolute() else Path(item).resolve()
+        try:
+            path = (repo / item).resolve() if not Path(item).is_absolute() else Path(item).resolve()
+        except (OSError, ValueError):
+            # 非法路径（含 Windows 保留字符等）直接跳过——
+            # 上游可能从 git 输出或 context 里带进非路径文本，不该让它中断扫描。
+            continue
         if path.exists() and path.is_file() and path.suffix.lower() in MOJIBAKE_TEXT_EXTENSIONS:
             k = str(path).lower()
             if k not in seen:

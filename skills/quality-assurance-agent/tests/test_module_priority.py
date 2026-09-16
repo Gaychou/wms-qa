@@ -3,7 +3,36 @@ import pytest
 from pathlib import Path
 import tempfile
 import shutil
-from qa_agent import _risk_candidate_files
+from qa_agent import _risk_candidate_files, git_output
+
+
+def test_git_output_returns_empty_on_failure(tmp_path):
+    """git 命令失败时必须返回空字符串，而不是把 stderr 错误文本当成输出。
+
+    回归测试：曾经返回 stderr，导致 "fatal: not a git repository" 这类错误
+    文本被下游当作文件路径使用。在 Windows + Python 3.9 上 Path.resolve()
+    会因非法字符抛 OSError（Python 3.11 起不再抛），从而在 CI 上炸掉。
+    """
+    # tmp_path 不在任何 git 仓库内，git 必定失败
+    assert git_output(tmp_path, ["diff", "--name-only"]) == ""
+    assert git_output(tmp_path, ["status", "--short"]) == ""
+
+
+def test_risk_candidate_files_skips_unusable_paths(tmp_path):
+    """context 里混入非路径文本时跳过，不中断扫描。
+
+    回归测试：上游可能把 git 的错误/帮助文本带进候选列表，
+    这类字符串在 Windows 上是非法路径。
+    """
+    (tmp_path / "ok.py").write_text("x = 1", encoding="utf-8")
+
+    result = _risk_candidate_files(
+        tmp_path,
+        {"changedFiles": ["ok.py", "-U, --unified[=<n>]   generate diffs with <n> lines context", "bad:name?.py"]},
+        module=None,
+    )
+
+    assert [p.name for p in result] == ["ok.py"]
 
 
 def test_module_parameter_has_priority():
