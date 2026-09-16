@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.9", "3.12"]
+    defaults:
+      run:
+        working-directory: skills/quality-assurance-agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Syntax check
+        run: python -m py_compile scripts/qa_agent.py
+
+      - name: Run test suite
+        run: python -m pytest tests/ -q
+
+  shellcheck:
+    name: shellcheck install.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck skills/quality-assurance-agent/install.sh
+
+  manifests:
+    name: Validate plugin manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check required fields
+        run: |
+          python - <<'PY'
+          import json, sys, pathlib
+
+          errors = []
+
+          mp = json.loads(pathlib.Path(".claude-plugin/marketplace.json").read_text("utf-8"))
+          for key in ("name", "owner", "plugins"):
+              if key not in mp:
+                  errors.append(f"marketplace.json 缺少顶层字段: {key}")
+          if "source" in mp:
+              errors.append("marketplace.json: source 必须是 plugins 条目内字段，不能放在顶层")
+          for entry in mp.get("plugins", []):
+              for key in ("name", "source"):
+                  if key not in entry:
+                      errors.append(f"marketplace.json plugins 条目缺少字段: {key}")
+
+          pj = json.loads(pathlib.Path(".claude-plugin/plugin.json").read_text("utf-8"))
+          for key in ("name", "version"):
+              if key not in pj:
+                  errors.append(f"plugin.json 缺少字段: {key}")
+
+          if errors:
+              print("\n".join(errors))
+              sys.exit(1)
+          print("manifests OK")
+          PY
+
+  no-internal-refs:
+    name: Scan for internal references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail if company-internal identifiers are present
+        run: |
+          # 注意：不要把公开域名（如 qyapi.weixin.qq.com）加进哨兵列表——
+          # 它是文档里合法使用的公开 webhook 地址，真正敏感的是 key。
+          SENTINELS='15993f30|algobuy|zhizhengroup|blindbox|blind_box|saas-blindbox|creative-content-bench|盲盒|开盒'
+          if grep -rniE "$SENTINELS" \
+               --include='*.py' --include='*.md' --include='*.json' \
+               --include='*.yaml' --include='*.yml' --include='*.sh' \
+               --include='*.ps1' --include='*.cmd' --include='*.js' \
+               --exclude='ci.yml' . \
+             | grep -v '^./docs/superpowers/'; then
+            echo "::error::发现内部标识，拒绝合并"
+            exit 1
+          fi
+          echo "内部标识扫描通过"

@@ -1,0 +1,6 @@
+interface:
+  display_name: "QA Test Runner"
+  short_description: "Runs mapped tests, repairs failures, and gates completion."
+  default_prompt: "Use qa-test-runner to execute mapped spec tasks, repair failures, and run assert-completion."
+policy:
+  allow_implicit_invocation: true

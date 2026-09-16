@@ -1,0 +1,6 @@
+interface:
+  display_name: "QA Context Profiler"
+  short_description: "Collects QA context, stack profile, and environment evidence."
+  default_prompt: "Use qa-context-profiler to collect QA context, existing cases/tests, project test profile, and environment checks for this repository."
+policy:
+  allow_implicit_invocation: true

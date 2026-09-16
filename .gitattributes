@@ -1,0 +1,18 @@
+# 统一行尾。不依赖每个人本地的 core.autocrlf —— 显式声明在仓库里才是确定的。
+* text=auto eol=lf
+
+# shell 脚本必须 LF。CRLF 会让首行变成 "#!/usr/bin/env sh\r"，
+# 在 Linux / macOS / Git Bash / WSL 下报 bad interpreter。
+*.sh      text eol=lf
+**/bin/*  text eol=lf
+
+# Windows 原生脚本用 CRLF
+*.ps1     text eol=crlf
+*.cmd     text eol=crlf
+
+# 二进制文件不做行尾转换
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.ico     binary
+*.gif     binary

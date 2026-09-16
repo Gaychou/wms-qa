@@ -1,0 +1,51 @@
+# test-cases.json Schema
+
+```json
+{
+  "generatedAt": "ISO-8601 timestamp",
+  "status": "draft|confirmed",
+  "module": "模块名",
+  "scope": {
+    "description": "用例覆盖范围",
+    "businessMainPath": "主业务流程",
+    "blockers": ["已知阻塞项"],
+    "oracles": ["验证基准"]
+  },
+  "cases": [
+    {
+      "id": "TC-P0-001",
+      "priority": "P0|P1|P2|P3",
+      "status": "new|existing|modified",
+      "title": "用例标题（中文）",
+      "businessActor": "业务角色",
+      "operationPath": "业务操作路径",
+      "preconditions": ["前置条件"],
+      "businessStateBefore": "操作前业务状态",
+      "businessAction": "业务操作描述",
+      "businessStateAfter": "操作后业务状态",
+      "steps": [
+        {
+          "step": 1,
+          "action": "操作步骤",
+          "expected": "预期结果"
+        }
+      ],
+      "businessAssertions": ["业务断言"],
+      "risk": "关联风险编号（RISK-P0-001）",
+      "coveredRisks": ["RISK-P0-001"],
+      "openQuestions": ["OQ-001"],
+      "result": {
+        "executedAt": null,
+        "outcome": null
+      }
+    }
+  ],
+  "openQuestions": [
+    {
+      "id": "OQ-001",
+      "question": "待确认问题",
+      "relatedCase": "TC-P0-001"
+    }
+  ]
+}
+```

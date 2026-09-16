@@ -1,0 +1,6 @@
+interface:
+  display_name: "QA Risk Analyzer"
+  short_description: "Finds high-risk paths before case and script generation."
+  default_prompt: "Use qa-risk-analyzer to identify high-risk business paths, likely bugs, and missing assertions for the current QA scope."
+policy:
+  allow_implicit_invocation: true

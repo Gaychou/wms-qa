@@ -1,0 +1,6 @@
+interface:
+  display_name: "QA Test Script Generator"
+  short_description: "Maps confirmed cases to spec tasks and test files."
+  default_prompt: "Use qa-test-script-generator to convert confirmed test-cases.json into spec tasks and concrete unit/API/integration/E2E tests."
+policy:
+  allow_implicit_invocation: true

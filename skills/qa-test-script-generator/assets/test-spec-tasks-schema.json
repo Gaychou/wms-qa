@@ -1,0 +1,37 @@
+# test-spec-tasks.json Schema
+
+```json
+{
+  "generatedAt": "ISO-8601 timestamp",
+  "mode": "acceptance|development",
+  "cases": ["TC-P0-001"],
+  "tasks": [
+    {
+      "id": "TASK-001",
+      "sourceCaseId": "TC-P0-001",
+      "priority": "P0|P1|P2|P3",
+      "layer": "unit|integration|api|e2e",
+      "targetFile": "tests/api/module/tc-p0-001.sh",
+      "testName": "可读的测试名称",
+      "command": "可复制粘贴执行的命令",
+      "assertions": ["断言1", "断言2"],
+      "oracle": {
+        "ui": [],
+        "api": ["API 验证基准"],
+        "db": ["数据库验证基准"],
+        "sideEffects": [],
+        "negativeAssertions": ["负向断言"]
+      },
+      "data": {
+        "pendingId": "<PENDING_ID>",
+        "description": "测试数据说明"
+      },
+      "implementationStatus": "implemented|not-implemented",
+      "executionStatus": "not-run|passed|failed|blocked",
+      "evidence": [],
+      "blocker": null,
+      "nextAction": null
+    }
+  ]
+}
+```

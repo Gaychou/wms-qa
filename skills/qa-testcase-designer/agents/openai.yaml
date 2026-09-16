@@ -1,0 +1,6 @@
+interface:
+  display_name: "QA Testcase Designer"
+  short_description: "Creates reviewed Chinese business-operation test cases."
+  default_prompt: "Use qa-testcase-designer to generate and review Chinese business operation test cases, render a confirmation page, and wait for user confirmation."
+policy:
+  allow_implicit_invocation: true

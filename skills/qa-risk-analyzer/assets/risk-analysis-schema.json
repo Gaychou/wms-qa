@@ -1,0 +1,55 @@
+# risk-analysis.json Schema
+
+```json
+{
+  "generatedAt": "ISO-8601 timestamp",
+  "scope": {
+    "module": "模块名",
+    "files": ["文件路径列表"],
+    "description": "risk scope 描述"
+  },
+  "risks": [
+    {
+      "id": "RISK-P0-001",
+      "priority": "P0|P1|P2|P3",
+      "category": "permission-boundary|money-reward-settlement|state-transition|async-callback-retry|data-consistency|negative-path|concurrency|provably-fair|business-rule|privacy（固定枚举，中文随枚举定义在报告渲染层）",
+      "summary": "一句话风险描述",
+      "businessPath": "具体业务操作路径，如 POST /order/create → doOpenByUsdInTx → ...",
+      "affectedFiles": ["真正相关的代码文件列表"],
+      "requiredAssertions": [
+        "可验证断言1",
+        "可验证断言2"
+      ],
+      "requiredOracles": {
+        "ui": ["UI 验证基准"],
+        "api": ["API 验证基准"],
+        "db": ["数据库验证基准"],
+        "sideEffects": ["副作用验证基准"],
+        "negativeAssertions": ["负向断言"]
+      },
+      "suggestedTestLayers": ["api", "db"],
+      "coverageStatus": "missing|partial|covered",
+      "coverageGaps": [
+        {
+          "gap": "覆盖缺口描述",
+          "requiredAssertions": ["缺失的断言"]
+        }
+      ]
+    }
+  ],
+  "coverageGaps": [
+    {
+      "riskId": "RISK-P0-001",
+      "gap": "覆盖缺口描述",
+      "requiredAssertions": ["缺失的断言"]
+    }
+  ],
+  "openQuestions": [
+    {
+      "id": "OQ-001",
+      "question": "无法确定的问题",
+      "relatedRisk": "RISK-P0-001"
+    }
+  ]
+}
+```

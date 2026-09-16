@@ -1,0 +1,6 @@
+interface:
+  display_name: "QA Report Generator"
+  short_description: "Aggregates gate artifacts and renders the final QA report."
+  default_prompt: "Use qa-report-generator to aggregate completion and code-review gates, render the final HTML report, and produce the readiness decision."
+policy:
+  allow_implicit_invocation: true

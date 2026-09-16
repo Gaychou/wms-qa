@@ -1,0 +1,6 @@
+interface:
+  display_name: "Quality Assurance Agent"
+  short_description: "编排分阶段全栈 QA，并使用硬性完成门禁。"
+  default_prompt: "使用 quality-assurance-agent，对当前需求、模块、git diff 或全栈业务流程做 QA 验收；只保留测试用例确认这一个人工门禁，其余自动执行。"
+policy:
+  allow_implicit_invocation: true
