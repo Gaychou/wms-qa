@@ -1,70 +1,99 @@
-# Failure Repair Loop
+# 失败修复循环（Failure Repair Loop）
 
-## Classification
+## 修复循环：必须执行完整循环
 
-For every failure, classify before editing:
+每一个业务失败都要走完这个循环，不允许「改一下看看，不行就换下一个失败」。
 
-- Product bug: test assertion matches current requirement and production code violates it.
-- Obsolete test: test assertion reflects old requirement and production code matches current requirement.
-- Test bug: test setup, data, selector, mock, or timing is wrong.
-- Environment issue: missing service, credentials, network, browser, database, or dependency.
-- Requirement ambiguity: no authoritative expected result exists.
+1. **分析失败** — 读失败日志与证据，定位根本原因。先按下节做三分类，再动手。
+2. **制定修复方案** — 明确写下：要改什么、**为什么这样改**、重跑后**哪一条断言**会变绿。
+   写不出「预期结果」，说明还没定位到根因 —— 回到第 1 步。
+3. **执行修复** — 应用最小改动。
+4. **重新执行** — 重跑**最小失败范围**，不是全量。
+5. **验证结果**
+   - **通过** → 记录「根因 + 改动 + 验证命令与结果」，该失败的循环结束。
+   - **仍然失败** → **必须回到第 1 步重新分析**。不许把同一个修复原样再试一遍。
+6. **循环上限** — 最多 `maxRepairLoops` 轮（默认 5，见 `qa-agent.config.yaml`
+   的 `qualityGates.maxRepairLoops`）。到达上限仍未修复，才报告「自动修复失败」，
+   并输出**完整的尝试历史**：每一轮的分析结论、改动内容、重跑结果。
 
-This classification is done by the agent from local evidence first. Do not ask the user to choose between test bug, product bug, or environment issue unless the local evidence still cannot disambiguate the root cause after one repair pass.
+### 每轮必须换假设，不是重复动作
 
-Also record whether the failure happened in:
+循环的价值在于每轮换一个假设。判断标准：
 
-- Business assertion: a confirmed operation path produced the wrong business result.
-- Quality gate: compile/build/test command failed before or around business assertions.
-- Environment readiness: tools, browsers, services, credentials, encoding, or test discovery blocked execution.
+- 第 N+1 轮的**分析结论与第 N 轮相同** → 这不是新假设，**立即停止循环**，
+  按 blocker 上报并附完整尝试历史。不要为了凑轮次把同一个解释换个说法再说一遍。
+- 第 N+1 轮换了假设（例如从「测试脚本 bug」改判为「产品缺陷」，或发现前一轮
+  的修复本身有缺陷）→ 即使前面已经失败过，**也要继续走完循环**。
 
-Only business-assertion failures should make a business case `failed`. Quality-gate or environment failures that prevent execution should make affected business cases `blocked` and should update the quality/environment evidence instead.
+这一条同时守住两件事：既不早停（失败一次就放弃），也不空转（拿同一条理由耗轮次）。
 
-## Three-Way Comparison
+### 修复历史必须可交付
 
-Always compare:
+无论最终通过还是耗尽轮次，都要能给出：
 
 ```text
-test assertion <-> current requirement/spec <-> production implementation
+第 N 轮 | 分析结论（根因假设） | 改动 | 重跑命令 | 结果
 ```
 
-Do not fix code based on a failing assertion alone.
+缺少这个历史，「自动修复失败」就只是三个字，接手的人得从头再查一遍。
 
-For obsolete-test decisions, check recent history before editing:
+## 失败分类（三分类）
+
+每个失败先分类，再决定修不修。分类用本地证据（代码、日志、API 响应）：
+
+| 类型 | 判断标准 | 行动 |
+|---|---|---|
+| **产品缺陷** | 断言符合当前需求，生产代码违反它 | 修产品代码，重跑 |
+| **测试脚本 bug** | 断言反映的是旧需求 / 断言逻辑写错，生产代码符合当前需求 | 修测试，重跑 |
+| **测试基础设施 bug** | e2e-fixture、配置加载、共享 setup/teardown 的缺陷 | 修基础设施，重跑受影响 task |
+| **环境问题** | 服务未启动、端口占用、MCP 断开、数据不满足前提 | 修复环境，重跑 |
+| **需求歧义** | 不存在权威的预期结果 | 记录 blocker，向上游报告，不自行修复 |
+
+分类由 agent 用本地证据完成。只有在**完成一轮修复后**本地证据仍无法区分
+「测试 bug / 产品 bug / 环境问题」时，才向用户提问。
+
+同时记录失败发生在哪一层：
+
+- **业务断言**：已确认的操作路径产出了错误的业务结果。
+- **质量门禁**：编译 / 构建 / 测试命令失败，还没走到业务断言。
+- **环境就绪**：工具、浏览器、服务、凭证、编码或测试发现被阻塞。
+
+只有**业务断言**失败才把业务用例标为 `failed`。质量门禁或环境问题导致无法执行的，
+受影响的业务用例标为 `blocked`，并更新质量 / 环境证据。
+
+## 三方比对
+
+永远比对这三者，不要仅凭一条失败的断言就改代码：
 
 ```text
+测试断言  <->  当前需求 / 规格  <->  生产实现
+```
+
+判断「测试是否过期」前先查历史：
+
+```bash
 git log --oneline -- <file>
-git show <relevant-commit> -- <file>
+git show <相关提交> -- <file>
 ```
 
-Use history to distinguish "test assertion is stale" from "production code regressed from a business/API contract".
+用历史区分「测试断言过期」和「生产代码从业务 / API 契约回退了」。
 
-## Repair Rules
+> 实例：某测试断言 `assertEquals(SOCIAL, ...)`，方法名和 `@DisplayName` 却写着
+> `shouldBeOther`。查 `git show <首个提交> -- <file>` 发现原始断言是 `OTHER`，
+> 是后一次改动顺手改错了断言又没改名字 —— 这类矛盾只有看历史才能判定谁对。
 
-- Make the smallest change that directly addresses the root cause.
-- Avoid broad refactors unless the root cause cannot be fixed safely otherwise.
-- Re-run the targeted failing tests after each fix.
-- Then re-run the relevant quality gate.
-- Commit product-code fixes atomically.
-- Stop after `maxRepairLoops` and report remaining failures if unresolved.
+## 修复规则
 
-Default routing:
+- 只改最小根因，不做无关重构。
+- 每轮修复后重跑**最小失败范围**，通过后再跑相关质量门禁。
+- 修复一个「产品缺陷」或「测试基础设施 bug」后，立即把根因模式沉淀为
+  bug-pattern（`save-knowledge --category bug-pattern`）—— 下一轮 risk-analyzer
+  会读它来优先验证同类风险。
 
-1. **Test bug** -> fix the test, rerun the exact failing scope.
-2. **Product bug** -> fix code, rerun the exact failing scope, then broaden if needed.
-3. **Environment issue** -> repair the environment/service/dependency, then rerun.
-4. **Requirement ambiguity** -> escalate only when the expected result cannot be derived from authoritative sources.
+## 提交约定
 
-If the same failure class repeats after one repair attempt, treat it as a blocker and report the exact evidence chain instead of looping the same explanation.
+- 测试新增：`test: 添加 <模块> 测试覆盖`
+- 产品修复：`fix: 修复 <问题>`
+- 工具/配置：`chore: 更新 <工具或配置>`
 
-## Commit Guidance
-
-- Test additions: `test: 添加 <模块> 测试覆盖`
-- Product fixes: `fix: 修复 <问题>`
-- Tooling/config: `chore: 更新 <工具或配置>`
-
-Each commit body should include:
-
-- Root cause.
-- Fix summary.
-- Verification command and result.
+每个提交正文包含：根因、修复摘要、验证命令与结果。

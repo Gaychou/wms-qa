@@ -177,7 +177,7 @@ Failure handling order:
 1. Classify from local evidence before editing.
 2. Prefer repairing the narrowest artifact that explains the failure.
 3. Re-run the exact failing scope before expanding the blast radius.
-4. Escalate only when the same failure class repeats after one repair attempt or the evidence is genuinely ambiguous.
+4. Escalate only when the next round cannot produce a new hypothesis (repeating the same explanation is spinning, not repairing), or when the evidence is genuinely ambiguous. Run the full loop in `failure-repair-loop.md` — up to `maxRepairLoops` rounds — before reporting a blocker.
 
 User escalation is the last resort, not the default path. Do not ask the user to decide whether a failure is a test bug, product bug, or environment issue when the evidence already points to one class.
 

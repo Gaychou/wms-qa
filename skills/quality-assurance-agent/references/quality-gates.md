@@ -65,7 +65,7 @@ Default `doctor --strict` policy:
 
 G0 failures usually block execution. They should mark affected business cases `blocked`, not `failed`, unless the business assertion actually ran and failed.
 
-When a failure is actionable from local evidence, the agent should repair it before escalating. Only escalate if the same failure class repeats after one repair attempt or the expected result cannot be derived from authoritative sources.
+When a failure is actionable from local evidence, the agent should repair it before escalating. Escalation is for the case where the **next round cannot produce a new hypothesis** — re-running the same fix or restating the same explanation is not a repair attempt, it is spinning. Run the full loop described in `failure-repair-loop.md` (up to `maxRepairLoops` rounds, default 5) before reporting a blocker, or escalate immediately when the expected result cannot be derived from authoritative sources.
 
 ## Completion Gate
 
