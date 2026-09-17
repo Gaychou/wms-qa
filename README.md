@@ -1,117 +1,132 @@
 # QA Agent
 
-[中文文档](README.zh-CN.md) | English
+中文文档 | [English](README.en.md)
 
-An end-to-end QA acceptance orchestrator for coding agents. It walks a feature
-through context gathering, risk analysis, test-case design, script generation,
-execution, code review, and a final readiness verdict — pausing exactly once,
-for you to approve the test cases.
+端到端 QA 验收工具包，以 **Agent Skill** 形式分发。把一次功能验收拆成固定阶段，
+从上下文收集一路推进到报告收口，**只在用例确认时停下等你审核**。
 
-Distributed as an **Agent Skill**, so it works with Claude Code, Codex, Cursor,
-and any other agent that reads the `SKILL.md` format.
+支持 Claude Code、Codex、Cursor 及任何遵循 `SKILL.md` 规范的 agent。
 
 ```
-context → risk analysis → test case design → 【you confirm】 → scripts → run & repair → code review → report
+上下文收集 → 风险分析 → 用例设计 → 【你来确认】 → 脚本生成 → 执行与修复 → 代码审查 → 报告
 ```
 
-## Install
+## 安装
 
 ```bash
-# Option 1 (recommended): cross-agent, works with 40+ agents
+# 方式一（推荐）：跨 agent，支持 40+ 种
 npx skills add mingdui/ming-qa -g
 
-# Option 2: Claude Code plugin marketplace
+# 方式二：Claude Code 官方插件市场
 /plugin marketplace add mingdui/ming-qa
 /plugin install ming-qa@ming-qa
 
-# Option 3: from source (offline / custom install location)
+# 方式三：从源码（离线环境 / 自定义安装位置）
 git clone https://github.com/mingdui/ming-qa.git
 cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude
 ```
 
-No shell profile is modified by any of these. See [docs/installation.md](docs/installation.md)
-for how to invoke the CLI and for troubleshooting.
+三种方式都**不会修改你的 shell 配置文件**。
+CLI 的调用方式与故障排除见 [docs/installation.md](docs/installation.md)。
 
 <details>
-<summary>Installing non-interactively (scripts / CI)</summary>
+<summary>非交互安装（脚本化 / CI）</summary>
 
 ```bash
-npx skills add mingdui/ming-qa --agent claude-code --yes \
-  -s quality-assurance-agent -s qa-context-profiler -s qa-risk-analyzer \
-  -s qa-testcase-designer -s qa-test-script-generator -s qa-test-runner \
-  -s qa-code-reviewer -s qa-report-generator
+npx skills add mingdui/ming-qa --agent claude-code --yes   -s quality-assurance-agent -s qa-context-profiler -s qa-risk-analyzer   -s qa-testcase-designer -s qa-test-script-generator -s qa-test-runner   -s qa-code-reviewer -s qa-report-generator
 ```
 
-- The agent is named **`claude-code`**, not `claude`（`claude` aborts with `Invalid agents`）.
-- `--skill` takes one exact name at a time — no commas, no `*`. The CLI expands `*` as a
-  **filesystem** glob against your current directory, so it fails with a confusing
-  `No matching skills found for: AGENTS.md, src, …`. Repeat `-s` for each skill.
+- agent 的取值是 **`claude-code`**，不是 `claude`（传 `claude` 会直接报
+  `Invalid agents` 并中止）。
+- `--skill` 一次只接受**一个精确名称**：不支持逗号分隔，也不支持 `*` 通配符
+  ——CLI 会把 `*` 当成**文件系统**通配符在你当前目录展开，于是报出
+  `No matching skills found for: AGENTS.md, src, …` 这种看似不相干的错误。
+  要装多个就重复写 `-s`。
 
 </details>
 
-## Quick start
+## 快速上手
 
 ```bash
-cd your-project
+cd 你的项目
 
-# Initialise: creates .qa-agent/, config templates, and the Playwright E2E setup
+# 初始化：生成 .qa-agent/ 目录、配置模板，并装好 Playwright E2E 环境
 ming-qa init-project --repo . --agent claude     # claude / codex / both
 
-# Fill in your secrets (git-ignored, never commit this)
+# 填入密钥（已 git-ignored，绝不要提交）
 #   .qa-agent/local/.env
 
-# Environment check
+# 环境体检
 ming-qa doctor --repo . --strict --check-services
 ```
 
-Then, in your agent:
+然后在 Claude Code / Codex 里说：
 
 ```
-Use quality-assurance-agent to run acceptance testing on <your module>
+使用 quality-assurance-agent，对 <你的模块> 进行验收
 ```
 
-The orchestrator pauses when the test cases are ready and waits for your
-approval. Everything after that runs automatically.
+用例生成后会停下等你确认。确认之后的所有阶段自动衔接，不需要人工介入。
 
-Already-verified module? Just ask for a regression — existing cases and scripts
-are reused.
+### 常用场景
 
-## What it produces
+已有模块增加新场景的用例（不重复确认旧用例）：
 
-Everything lands in `.qa-agent/` inside your project.
+```
+使用 quality-assurance-agent，对 <模块> 增加 <场景> 的用例
+```
 
-| Path | Contents | Survives `git clone` |
+已验收过的模块直接回归（跳过用例设计，重跑已有脚本）：
+
+```
+使用 quality-assurance-agent，对 <模块> 做回归
+```
+
+## 产物在哪
+
+所有产物在目标项目的 `.qa-agent/` 下。
+
+| 目录 | 内容 | git clone 后 |
 |---|---|---|
-| `.qa-agent/cases/` | Approved long-term test cases | ✅ |
-| `.qa-agent/spec-tasks/` | Use-case → script mapping | ✅ |
-| `.qa-agent/reports/` | HTML reports | ✅ |
-| `.qa-agent/current/` | This run's working artifacts | ❌ regenerated |
-| `tests/api/<module>/` | Generated test scripts | ✅ |
+| `.qa-agent/cases/` | 已确认的长期用例 | ✅ |
+| `.qa-agent/spec-tasks/` | 用例→脚本映射蓝图 | ✅ |
+| `.qa-agent/config/` | 项目 QA 配置 | ✅ |
+| `.qa-agent/fixtures/` | 账号/服务示例模板 | ✅ |
+| `.qa-agent/knowledge/` | 项目经验库 | ✅ |
+| `.qa-agent/reports/` | HTML 报告 | ✅ |
+| `.qa-agent/current/` | 本轮运行产物 | ❌ 需重新生成 |
+| `.qa-agent/runs/` | 执行日志与证据 | ❌ |
+| `.qa-agent/local/` | 本地账号密码 | ❌ |
+| `tests/api/<模块>/` | 测试脚本 | ✅ |
 
-## Requirements
+> **git clone 后首次回归**：`current/` 丢失是正常的。先跑 `init-project` 建目录，
+> 再执行 `generate-spec-tasks --acceptance-mode` 从 `cases/` 重新生成
+> `test-spec-tasks.json`。`tests/api/` 下的脚本不受影响。
 
-- Python 3.9+ (stdlib only — no third-party runtime dependencies)
+## 隐私与外发
+
+**本工具不内置任何默认外部服务地址，也不会向任何默认地址发送数据。**
+
+- **LLM 网关**：默认未配置。多模型交叉审查是可选增强，未配置时该阶段跳过，
+  不中断流程，也不发起任何请求。
+- **告警 webhook**：默认为空。不配置则不发通知、不产生网络请求。
+
+详见 [docs/configuration.md](docs/configuration.md)。
+
+## 系统要求
+
+- Python 3.9+（仅用标准库，无第三方运行时依赖）
 - Git
-- Java 21 / Maven or Node.js 20+ in the target project, depending on scope
+- 目标项目按验收范围需要 Java 21 / Maven 或 Node.js 20+
 
-## Privacy
+## 文档
 
-This tool ships with **no default external endpoints**. It will not contact any
-service unless you configure one:
+- [安装](docs/installation.md)
+- [配置](docs/configuration.md)
+- [架构](docs/architecture.md)
+- [贡献指南](CONTRIBUTING.md)
+- [变更日志](CHANGELOG.md)
 
-- LLM gateway — unset by default; multi-model review is skipped if unconfigured
-- Report webhook — empty by default; no notifications, no network requests
-
-See [docs/configuration.md](docs/configuration.md).
-
-## Documentation
-
-- [Installation](docs/installation.md)
-- [Configuration](docs/configuration.md)
-- [Architecture](docs/architecture.md)
-- [Contributing](CONTRIBUTING.md)
-- [Changelog](CHANGELOG.md)
-
-## License
+## 许可证
 
 [MIT](LICENSE)
