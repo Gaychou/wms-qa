@@ -252,6 +252,115 @@ def test_render_report_accepts_contract_shaped_artifacts(project):
     assert "第 3 行未见去重键" in html, "finding 证据未渲染——证据字段口径不一致"
 
 
+def _advance_to_report(repo: Path, current: Path) -> Path:
+    """把链路推到 render-report：执行证据 → 门禁 → 代码审查 → 渲染报告。
+
+    产出真实形状的全部产物，供渲染层消费。任何一步失败都直接断言出来，
+    避免后续章节断言因为「上游产物根本没生成」而变成假阳性。
+    """
+    risks = _derive_risks(repo, current)
+    cases_path = _write_cases(repo, risks)
+
+    proc = _run(repo, "generate-spec-tasks", "--cases", str(cases_path), "--repo", ".",
+                "--output", str(current / "test-spec-tasks.json"))
+    assert proc.returncode == 0, f"generate-spec-tasks 失败：{_out(proc)}"
+
+    # 逐用例执行证据：让用例矩阵真的渲染出 PASS
+    runs_dir = repo / ".qa-agent" / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))["cases"]
+    for i, case in enumerate(cases):
+        run_id = str(1_800_000_000 + i)
+        log_name = f"run-{case['id'].lower()}-{run_id}.log"
+        (runs_dir / log_name).write_text(
+            f"case: {case['id']}\noutcome: PASS\n", encoding="utf-8"
+        )
+        (runs_dir / f"run-{case['id'].lower()}-{run_id}.meta.json").write_text(
+            json.dumps({
+                "version": "1.0", "runId": run_id, "caseId": case["id"], "taskId": "",
+                "script": "mvn test", "logFile": log_name, "exitCode": 0,
+                "executedAt": "2026-09-17T10:00:00+08:00", "outcome": "PASS",
+            }, ensure_ascii=False), encoding="utf-8")
+
+    steps = [
+        (("aggregate-runs", "--repo", ".", "--output", str(current / "latest-run.json")), "aggregate-runs"),
+        (("update-results", "--cases", str(cases_path), "--run", str(current / "latest-run.json")), "update-results"),
+        (("assert-completion", "--cases", str(cases_path),
+          "--spec-tasks", str(current / "test-spec-tasks.json"),
+          "--priorities", "P0,P1", "--min-specs-by-priority", "P0=1,P1=1",
+          "--output", str(current / "completion-check.json")), "assert-completion"),
+    ]
+    for args, label in steps:
+        proc = _run(repo, *args)
+        # assert-completion 判失败是合法结论，但不得崩溃
+        assert "Traceback" not in proc.stderr, f"{label} 崩溃：{_out(proc)}"
+
+    # 按契约形状写 code-review（summary 是字符串，finding 用 title/evidence）
+    (current / "code-review.json").write_text(json.dumps({
+        "status": "failed",
+        "summary": "一句话结论（契约里 summary 是字符串）",
+        "scope": {"files": ["src/main/java/demo/PayService.java"], "description": "示例模块"},
+        "findings": [{
+            "id": "CR-001", "severity": "P1",
+            "file": "src/main/java/demo/PayService.java", "line": 3,
+            "title": "扣减缺少幂等保护", "evidence": "第 3 行未见去重键",
+            "recommendation": "增加幂等键",
+        }],
+        "residualRisks": [], "deferredFindings": [],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    report = current.parent / "reports" / "latest-report.html"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    proc = _run(repo, "render-report",
+                "--cases", str(cases_path),
+                "--run", str(current / "latest-run.json"),
+                "--spec-tasks", str(current / "test-spec-tasks.json"),
+                "--completion-check", str(current / "completion-check.json"),
+                "--risk-analysis", str(current / "risk-analysis.json"),
+                "--code-review", str(current / "code-review.json"),
+                "--title", "金样测试报告",
+                "--output", str(report))
+    assert "Traceback" not in proc.stderr, f"渲染崩溃：{_out(proc)}"
+    assert proc.returncode == 0, _out(proc)
+    return report
+
+
+def test_report_sections_render_actual_content(project):
+    """渲染契约：报告的每个章节都要真的渲染出内容，不能只剩标题。
+
+    这条覆盖 render 层的全部函数——其中大多数与 _render_code_review 一样是从
+    别的项目整段搬来的（代码里留有 "from project" 标记），照着另一套产物形状写，
+    跟本项目的契约从没对过。_render_code_review 已经因此炸过一次（把字符串
+    summary 当字典读）。
+
+    只断言「不崩溃」是不够的：读错字段往往不报错，只是安静地渲染成空白。
+    所以每一节都断言一个只有该节数据才能带出来的具体字符串。
+    """
+    repo, current = project
+    report = _advance_to_report(repo, current)
+    html = report.read_text(encoding="utf-8", errors="replace")
+
+    risks = json.loads((current / "risk-analysis.json").read_text(encoding="utf-8"))["risks"]
+    cases = json.loads((repo / ".qa-agent" / "cases" / "demo.json").read_text(encoding="utf-8"))["cases"]
+
+    expectations = [
+        ("执行摘要", ["本轮范围", "本次交付"]),
+        ("验收门禁", ["验收完备度"]),
+        ("代码审查", ["扣减缺少幂等保护", "第 3 行未见去重键"]),
+        ("风险与覆盖缺口", ["风险明细", risks[0]["id"]]),
+        ("用例矩阵", ["用例矩阵", cases[0]["id"]]),
+        ("附录", ["附录"]),
+    ]
+    for section, probes in expectations:
+        assert section in html, f"报告缺少章节「{section}」"
+        for probe in probes:
+            assert probe in html, f"章节「{section}」未渲染出内容：{probe!r}"
+
+    # verdict 卡片的两个指标都要在，且不能互相替代
+    assert "通过率" in html, "verdict 卡片缺少通过率"
+    assert "验证覆盖" in html, "verdict 卡片缺少验证覆盖"
+
+
 def test_update_results_consumes_aggregate_runs_output(project):
     """证据链契约：aggregate-runs 的产出必须能被 update-results 消费。
 
