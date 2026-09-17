@@ -3089,6 +3089,24 @@ def _build_task_assertions(case: dict[str, Any], focus: dict[str, str]) -> list[
     return result
 
 
+def method_name_for_task_id(task_id: str) -> str:
+    """把 spec task id 转成合法的测试方法名。
+
+    SPEC-TC-P0-001-UNIT-001 -> specTcP0001Unit001
+
+    methodName 是「生成器指定、实现者遵循」的契约：生成阶段把名字定死，执行阶段
+    按名字核对。只靠 testName 是不行的——那是中文业务描述（「… - 正常路径」），
+    与真实代码里的方法名对不上，「把任务映射到某个文件」就会被冒充成「实现了测试」。
+    """
+    parts = [p for p in re.split(r"[-_.\s]+", str(task_id or "")) if p]
+    if not parts:
+        return "specTask"
+    name = parts[0].lower() + "".join(p[:1].upper() + p[1:].lower() for p in parts[1:])
+    if not name[:1].isalpha():
+        name = "spec" + name
+    return name
+
+
 def build_spec_task(case: dict[str, Any], layer: str, focus: dict[str, str], index: int, repo: Path | None = None) -> dict[str, Any]:
     case_id = str(case.get("id", f"CASE-{index:03d}"))
     layer_code = {"unit": "UNIT", "integration": "INT", "api": "API", "e2e": "E2E"}[layer]
@@ -3106,6 +3124,8 @@ def build_spec_task(case: dict[str, Any], layer: str, focus: dict[str, str], ind
         "targetProject": target_project,
         "targetFile": target_file,
         "testName": title,
+        # 可执行的方法名（契约字段）：执行阶段按它核对测试是否真的实现了
+        "methodName": method_name_for_task_id(f"SPEC-{case_id}-{layer_code}-{index:03d}"),
         "businessActor": case.get("businessActor", ""),
         "operationPath": case.get("operationPath", " -> ".join(map(str, case.get("steps", [])))),
         "assertions": _build_task_assertions(case, focus),
@@ -3857,6 +3877,32 @@ def count_test_methods(path: Path) -> int:
     return 0 if is_placeholder_stub(path) else 1
 
 
+def discover_test_method_names(path: Path) -> set[str] | None:
+    """提取测试文件里真实存在的测试方法名。
+
+    Java 返回 @Test 标注的方法名；其它类型（Playwright spec 等）的「方法名」概念
+    不同，返回 None 表示该文件只能按数量校验。
+
+    只做数量校验是抓不住「映射≠实现」的：54 个 task 映射到一个只有 7 个 @Test 的
+    文件，只要补到 8 个方法就能蒙混过关，而那 8 个是不是对应的断言没人知道。
+    """
+    if path.suffix.lower() != ".java":
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+
+    names: set[str] = set()
+    for match in re.finditer(r"@Test\b", text):
+        # @Test 与方法签名之间可能隔着 @DisplayName 等注解，向后扫一段
+        tail = text[match.end(): match.end() + 600]
+        signature = re.search(r"\bvoid\s+([A-Za-z_$][\w$]*)\s*\(", tail)
+        if signature:
+            names.add(signature.group(1))
+    return names
+
+
 def assert_script_implementation_data(spec_tasks_data: dict[str, Any], repo: Path) -> dict[str, Any]:
     """脚本实现真实性门禁：映射到文件 ≠ 实现了测试。
 
@@ -3886,6 +3932,26 @@ def assert_script_implementation_data(spec_tasks_data: dict[str, Any], repo: Pat
                              "message": "占位 stub 脚本（echo BLOCKED + exit 0），测试未真正实现"})
             continue
         method_count = count_test_methods(path)
+
+        # 优先按方法名核对：task 声明了 methodName 且目标文件能解析出方法名时，
+        # 逐个核对它是否真的存在。数量校验只能保证「够数」，保证不了「对得上」。
+        expected_names = [str(t.get("methodName") or "") for t in file_tasks]
+        expected_names = [n for n in expected_names if n]
+        actual_names = discover_test_method_names(path)
+        if actual_names is not None and expected_names:
+            missing = [n for n in expected_names if n not in actual_names]
+            if missing:
+                findings.append({
+                    "type": "method-not-implemented", "severity": "fail", "targetFile": tf,
+                    "taskCount": len(file_tasks), "testMethodCount": method_count,
+                    "missingMethods": missing[:20], "missingMethodCount": len(missing),
+                    "message": (
+                        f"映射 {len(file_tasks)} 个 task，其中 {len(missing)} 个声明的方法"
+                        f"在 {path.name} 中不存在（如 {', '.join(missing[:3])}）"
+                    ),
+                })
+            continue
+
         if method_count < len(file_tasks):
             findings.append({"type": "mapping-not-implemented", "severity": "fail", "targetFile": tf,
                              "taskCount": len(file_tasks), "testMethodCount": method_count,
