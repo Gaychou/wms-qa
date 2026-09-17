@@ -8437,6 +8437,8 @@ def _render_header_and_verdict(title: str, meta: dict, readiness: dict, summary_
     vclass, big_label, subtitle = _verdict_class(readiness)
     total_cases = summary_stats.get("totalInScope", 0)
     pass_rate = summary_stats.get("passRate", "-")
+    coverage_rate = summary_stats.get("coverageRate", "-")
+    executed_n = summary_stats.get("executedCount", 0)
     conditions_n = summary_stats.get("conditionsCount", 0)
     cr_n = summary_stats.get("codeReviewCount", 0)
 
@@ -8455,7 +8457,8 @@ def _render_header_and_verdict(title: str, meta: dict, readiness: dict, summary_
   <div class="badge-huge">{html.escape(big_label)}</div>
   <div class="stats">
     <a class="stat" href="#cases"><div class="n">{total_cases}</div><div class="l">本轮用例</div></a>
-    <a class="stat" href="#cases"><div class="n">{pass_rate}</div><div class="l">通过率</div></a>
+    <a class="stat" href="#cases"><div class="n">{pass_rate}</div><div class="l">通过率（{executed_n} 条已执行）</div></a>
+    <a class="stat" href="#cases"><div class="n">{coverage_rate}</div><div class="l">验证覆盖（{executed_n}/{total_cases}）</div></a>
     <a class="stat" href="#conditions"><div class="n">{conditions_n}</div><div class="l">条件项</div></a>
     <a class="stat" href="#code-review"><div class="n">{cr_n}</div><div class="l">代码审查发现</div></a>
   </div>
@@ -8897,14 +8900,27 @@ def render_report(args: argparse.Namespace) -> None:
     in_scope, legacy = _partition_cases(all_cases)
 
     # Summary stats for verdict card
+    #
+    # 两个口径分开，因为它们回答的是两个不同的问题：
+    #   通过率   = 已执行里通过的比例  -> 「跑过的都过了吗」
+    #   验证覆盖 = 已执行占范围内的比例 -> 「验了多少」
+    # 只给一个数字时，用范围内总数当分母会把「还没跑到」和「跑失败」混在一起——
+    # 10/21 这个值既不表示质量也不表示进度，容易被读成 47% 不合格。
+    in_scope_total = len(in_scope)
+    executed_count = sum(
+        1 for c in in_scope if _find_run_for_case(run_data, str(c.get("id", "")))
+    )
     in_scope_passed = sum(1 for c in in_scope if _case_execution_passed(c, run_data))
-    pass_rate = f"{int(in_scope_passed * 100 / len(in_scope))}%" if in_scope else "—"
+    pass_rate = f"{int(in_scope_passed * 100 / executed_count)}%" if executed_count else "—"
+    coverage_rate = f"{int(executed_count * 100 / in_scope_total)}%" if in_scope_total else "—"
     conditions = readiness_data.get("conditions") or readiness_data.get("readinessConstraints") or []
     cr_findings = cr_data.get("findings", []) if cr_data else []
 
     summary_stats = {
-        "totalInScope": len(in_scope),
+        "totalInScope": in_scope_total,
+        "executedCount": executed_count,
         "passRate": pass_rate,
+        "coverageRate": coverage_rate,
         "conditionsCount": len(conditions),
         "codeReviewCount": len(cr_findings),
     }
@@ -9036,9 +9052,12 @@ def render_report(args: argparse.Namespace) -> None:
 def _check_sc001_pass_rate(latest_run: dict, report_html: str) -> dict | None:
     """SC-001：通过率 vs 执行结果一致性。
 
-    报告的通过率应等于 latest-run.json 中 finalOutcome=PASS 的用例占比。
-    若不一致（例如通过率显示 0% 但多数用例 PASS），说明渲染端读错了字段
-    （读 case.status 生命周期状态，而非执行结果 finalOutcome）。
+    口径：通过率 = 已执行中 finalOutcome=PASS 的占比（分母是**已执行**用例数，
+    不是范围内的用例总数）。范围内总数走另一个指标「验证覆盖」，两者分开呈现。
+
+    分母曾是分歧点：渲染端用范围内总数（10/21 = 47%），本检查用已执行数
+    （10/10 = 100%），于是每次运行自检都红。现在两边统一为「已执行」，
+    覆盖情况由「验证覆盖」卡片承担。
     """
     summary = latest_run.get("summary", {}) or {}
     total = int(summary.get("totalCases", 0) or 0)
@@ -9047,7 +9066,8 @@ def _check_sc001_pass_rate(latest_run: dict, report_html: str) -> dict | None:
         return None
     expected_rate = round(passed * 100 / total)
 
-    m = re.search(r'<div class="n">(\d+)%</div><div class="l">通过率</div>', report_html)
+    # 标签里带上了「N 条已执行」的括注，所以不能要求 </div> 紧跟「通过率」
+    m = re.search(r'<div class="n">(\d+)%</div><div class="l">通过率[^<]*</div>', report_html)
     if not m:
         return {
             "id": "SC-001",
@@ -9094,27 +9114,61 @@ def _check_sc001_pass_rate(latest_run: dict, report_html: str) -> dict | None:
 
 
 def _check_sc002_case_status(report_html: str, latest_run: dict) -> dict | None:
-    """SC-002：用例状态列 vs 执行结果。"""
-    confirmed_badges = len(re.findall(r'<span class="b mute">confirmed</span>', report_html))
-    passed = int((latest_run.get("summary", {}) or {}).get("casesPassed", 0) or 0)
-    if confirmed_badges > 0 and passed > 0:
-        return {
-            "id": "SC-002", "severity": "high", "category": "data-consistency",
-            "check": "用例状态列 vs 执行结果",
-            "summary": f"用例矩阵状态列显示 {confirmed_badges} 个 confirmed（生命周期状态），但存在 {passed} 条 PASS",
-            "evidence": {
-                "expected": "状态列显示 passed/failed（执行结果）",
-                "actual": f"状态列显示 confirmed × {confirmed_badges}",
-                "fields": [{"source": "latest-run.json", "path": "summary.casesPassed", "value": str(passed)}],
-            },
-            "fix": {
-                "file": "scripts/qa_agent.py", "function": "_render_case_row", "line": None,
-                "root_cause": "状态列读 case.status（生命周期状态），而非 finalOutcome（执行结果）",
-                "change": "状态列改用 finalOutcome 渲染（复用 _outcome_badge）",
-                "verify": "重渲染后状态列显示 PASS/FAIL，不再出现 confirmed",
-            },
-        }
-    return None
+    """SC-002：有执行结果的用例，状态列是否真的渲染成了执行结果。
+
+    逐用例核对，而不是数徽章总数。原判据是「存在 confirmed 徽章 ��� 存在 PASS」，
+    但 confirmed 徽章只在「该用例没有 run」时出现——那是合法的（本轮没跑到它）。
+    只要一次运行是部分执行，原判据就必然误报。
+
+    更麻烦的是它给出的 fix（一律改用 finalOutcome 渲染）：照做会让未执行用例的
+    状态列变空，把「这条没跑过」这个事实藏起来。渲染正确性 与 执行完整性 是两件事，
+    这个检查只管前者。
+    """
+    runs = latest_run.get("cases", []) if isinstance(latest_run, dict) else []
+    if not isinstance(runs, list):
+        return None
+
+    mismatched: list[dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        case_id = str(run.get("caseId") or "").strip()
+        outcome = str(run.get("finalOutcome") or "").upper()
+        if not case_id or outcome not in ("PASS", "FAIL"):
+            continue
+        # 定位该用例那一行（_render_case_row 输出 <details class="case-row" id="<cid>">）
+        match = re.search(
+            rf'<details class="case-row" id="{re.escape(case_id)}">(.*?)</summary>',
+            report_html,
+            re.S,
+        )
+        if not match:
+            continue
+        # 有 run 就必须展示执行结果徽章；渲染成生命周期状态才是本检查要抓的 bug
+        if f">{outcome}<" not in match.group(1):
+            mismatched.append({"caseId": case_id, "finalOutcome": outcome})
+
+    if not mismatched:
+        return None
+
+    sample = ", ".join(item["caseId"] for item in mismatched[:5])
+    more = f" 等 {len(mismatched)} 条" if len(mismatched) > 5 else ""
+    return {
+        "id": "SC-002", "severity": "high", "category": "data-consistency",
+        "check": "用例状态列 vs 执行结果",
+        "summary": f"{len(mismatched)} 条已有执行结果的用例，状态列却未展示执行结果：{sample}{more}",
+        "evidence": {
+            "expected": "该用例有 finalOutcome 时，状态列展示 PASS/FAIL",
+            "actual": f"{len(mismatched)} 条渲染成了生命周期状态",
+            "fields": [{"source": "latest-run.json", "path": "cases[].finalOutcome", "value": str(len(mismatched))}],
+        },
+        "fix": {
+            "file": "scripts/qa_agent.py", "function": "_render_case_row", "line": None,
+            "root_cause": "该用例有 run 却仍走了 _status_badge（生命周期状态）分支",
+            "change": "有 finalOutcome 时必须复用 _outcome_badge；没有 run 的用例保留生命周期状态——那种情况下它是唯一可展示的事实",
+            "verify": "重渲染后每一条有 run 的用例都显示 PASS/FAIL",
+        },
+    }
 
 
 def _check_sc003_coverage(report_html: str, risk_data: dict, coverage_map: dict[str, list[str]]) -> dict | None:
