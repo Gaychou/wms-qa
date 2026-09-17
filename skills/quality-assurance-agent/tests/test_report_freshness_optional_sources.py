@@ -25,13 +25,22 @@ from qa_agent import assert_report_freshness
 
 
 def _setup(tmp_path: Path) -> tuple[Path, Path, Path]:
-    """造出报告 + 用例，返回 (report, cases, generated)。"""
+    """造出报告 + 用例，返回 (report, cases, generated)。
+
+    时效门禁判的是「源是否比报告新」，所以源必须严格早于报告。这里显式把源的
+    mtime 回拨，不依赖两次写入之间自然流逝的时间——Windows 的时钟粒度约 15ms，
+    同一刻度内写入会让两边拿到相同时间戳，测试就以「恰好通过」的姿态掩盖了
+    顺序错误，而 Linux 纳秒级时钟会立刻把它暴露成 stale-source。
+    """
     report = tmp_path / "latest-report.html"
     cases = tmp_path / "test-cases.json"
     generated = tmp_path / "test-cases.generated.json"
 
-    report.write_text("<html>报告</html>", encoding="utf-8")
     cases.write_text(json.dumps({"version": "1.0", "cases": []}), encoding="utf-8")
+    report.write_text("<html>报告</html>", encoding="utf-8")
+
+    older = time.time() - 60
+    os.utime(cases, (older, older))
     return report, cases, generated
 
 
