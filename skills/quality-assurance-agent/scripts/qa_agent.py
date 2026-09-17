@@ -6468,20 +6468,35 @@ def doctor(args: argparse.Namespace) -> None:
             targets = default_local_stack_targets(repo, args)
             # 先探测
             for target in targets:
-                probe = probe_http_url(target["url"], timeout=getattr(args, "service_timeout", 5))
+                probe_url = target.get("healthUrl") or target["url"]
+                probe = probe_http_url(probe_url, timeout=getattr(args, "service_timeout", 5))
                 target["ok"] = bool(probe.get("ok"))
                 target["detail"] = probe.get("detail")
+                target["status"] = probe.get("status")
+                target["server"] = probe.get("server") or ""
+                target["probeUrl"] = probe_url
+                # 声明了 healthUrl 就按健康检查的标准判：健康端点返回 4xx/5xx 说明端口上
+                # 不是这个服务（或服务没起来）。baseUrl 根路径天然 404，不能当健康依据。
+                if target.get("healthUrl") and isinstance(target["status"], int) and target["status"] >= 400:
+                    target["ok"] = False
+                    target["detail"] = f"{target['detail']}（healthUrl 返回 {target['status']}，非健康响应）"
             # 自动启动不可达的服务
             if getattr(args, "auto_start", False):
                 targets = _auto_start_services(repo, args, targets)
             for target in targets:
+                detail = f"{target.get('probeUrl', target['url'])} -> {target.get('detail', 'unknown')}"
+                # 端口可达 ≠ 服务正确。带上对端身份，被无关进程占用端口时一眼就能看出。
+                if target.get("server"):
+                    detail += f" [Server: {target['server']}]"
                 add(
                     f"service:{target['name']}:reachable",
                     bool(target.get("ok")) or not target.get("required", False),
-                    f"{target['url']} -> {target.get('detail', 'unknown')}",
+                    detail,
                     category="services",
                     next_action=(
-                        f"已尝试自动启动 {target['name']} 服务但失败，请手动启动；仍不可达时查看日志 .qa-agent/current/{target['name']}.out.log（前端常见：缺依赖，先 cd 到服务目录执行 npm install）"
+                        f"已尝试自动启动 {target['name']} 服务但失败，请手动启动；仍不可达时查看日志 .qa-agent/current/{target['name']}.out.log（前端常见：缺依赖，先 cd 到服务目录执行 npm install）。"
+                        f"若探活『成功』但下游请求失败，核对上面的 Server 标识是否是预期进程——端口可能被无关进程占用；"
+                        f"在 config/services.json 为该服务声明 healthUrl 可获得真实的健康判定"
                         if target.get("required") and not target.get("ok")
                         else ""
                     ),
@@ -6859,6 +6874,19 @@ def collect_run_commands(run_data: dict[str, Any]) -> list[dict[str, Any]]:
     return commands
 
 
+def _server_signature(headers: Any) -> str:
+    """取对端的 Server 头（连 Content-Type 一起），用于识别「端口上到底是谁」。"""
+    if headers is None:
+        return ""
+    try:
+        server = (headers.get("Server") or "").strip()
+        content_type = (headers.get("Content-Type") or "").strip()
+    except Exception:  # noqa: BLE001 - 头字段不可读不该影响探活结论
+        return ""
+    parts = [p for p in (server, content_type) if p]
+    return " / ".join(parts)
+
+
 def probe_http_url(url: str, timeout: int = 5) -> dict[str, Any]:
     if not url:
         return {"url": url, "ok": False, "status": None, "detail": "missing url"}
@@ -6873,6 +6901,8 @@ def probe_http_url(url: str, timeout: int = 5) -> dict[str, Any]:
                 "status": status,
                 "durationSeconds": round(time.time() - started, 3),
                 "detail": "reachable",
+                # 端口可达 ≠ 服务正确。带上对端身份，误占端口的进程才看得出来。
+                "server": _server_signature(getattr(response, "headers", None)),
             }
     except urllib.error.HTTPError as exc:
         return {
@@ -6881,6 +6911,7 @@ def probe_http_url(url: str, timeout: int = 5) -> dict[str, Any]:
             "status": exc.code,
             "durationSeconds": round(time.time() - started, 3),
             "detail": f"http {exc.code}",
+            "server": _server_signature(getattr(exc, "headers", None)),
         }
     except Exception as exc:  # noqa: BLE001 - CLI should report probe failures without stack traces.
         return {
@@ -6926,6 +6957,7 @@ def default_local_stack_targets(repo: Path, args: argparse.Namespace | None = No
             url = explicit_url or (qa_env_value(repo, env_key) if env_key else "") or str(service.get("baseUrl") or "")
             if not url:
                 continue
+            health_url = str(service.get("healthUrl") or "").strip()
             targets.append(
                 {
                     "name": name,
@@ -6933,6 +6965,10 @@ def default_local_stack_targets(repo: Path, args: argparse.Namespace | None = No
                     "projectPath": str(repo),
                     "envKey": env_key,
                     "required": (name in required) if required else bool(service.get("required", False)),
+                    # 探活要用的地址：声明了 healthUrl 就用它——baseUrl 根路径对很多服务
+                    # 本来就返回 404，「有响应」证明不了端口上是正确的那个服务。
+                    "healthUrl": health_url.rstrip("/"),
+                    "readySignal": str(service.get("readySignal") or "").strip(),
                 }
             )
         if targets:
