@@ -33,6 +33,32 @@ jobs:
       - name: Run test suite
         run: python -m pytest tests/ -q
 
+      # install.ps1 曾在安装失败时仍打印 "Install complete." 并以 0 退出：
+      # $ErrorActionPreference=Stop 管不住原生命令的 stderr，只有 PowerShell 把它包成
+      # ErrorRecord 时才中断；CI 把 stderr 重定向到文件（OS 层）就不会包装，脚本带着
+      # 失败的退出码继续跑完。终端里手敲看不出问题，自动化下是静默失败。
+      - name: Verify install.ps1 exit-code contract
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:RUNNER_TEMP "ps1-exit-contract"
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+
+          & powershell -NoProfile -ExecutionPolicy Bypass -File ./install.ps1 -Target claude-code -SkillsPath $dest 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "first install should succeed, got exit=$LASTEXITCODE" }
+
+          & powershell -NoProfile -ExecutionPolicy Bypass -File ./install.ps1 -Target claude-code -SkillsPath $dest 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw "repeat install should fail (dest exists), got exit=0" }
+
+          # 旧名 claude 必须仍被接受，且落到同一个目标目录
+          $legacy = Join-Path $env:RUNNER_TEMP "ps1-exit-contract-legacy"
+          if (Test-Path $legacy) { Remove-Item -Recurse -Force $legacy }
+          & powershell -NoProfile -ExecutionPolicy Bypass -File ./install.ps1 -Target claude -SkillsPath $legacy 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "legacy target 'claude' should still work, got exit=$LASTEXITCODE" }
+
+          Write-Host "install.ps1 exit-code contract OK"
+          exit 0
+
   shellcheck:
     name: shellcheck shell scripts
     runs-on: ubuntu-latest

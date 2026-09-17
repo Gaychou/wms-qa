@@ -37,6 +37,16 @@ if ($Force) {
 $fullCommand = $PythonCommand + $argsList
 & $fullCommand[0] @($fullCommand[1..($fullCommand.Count - 1)])
 
+# 必须显式检查原生命令的退出码。
+# $ErrorActionPreference = "Stop" 管不住原生命令的 stderr：只有 PowerShell 把 stderr
+# 包成 ErrorRecord 时才会中断。而 CI / 自动化常把 stderr 重定向到文件（OS 层），
+# 这时不会被包装——脚本会带着失败的退出码继续跑完，打印 "Install complete." 并以 0 退出。
+# 终端里手敲看不出问题，自动化下就是静默失败。
+if ($LASTEXITCODE -ne 0) {
+  [Console]::Error.WriteLine("install-skill failed (exit $LASTEXITCODE)")
+  exit $LASTEXITCODE
+}
+
 $DestinationRoot = $SkillsPath
 if (-not $DestinationRoot) {
   if ($Target -eq "claude-code") {
