@@ -14,6 +14,25 @@ npx skills add mingdui/ming-qa -g
 
 安装时 CLI 会让你选择 **Symlink**（推荐，单一事实来源，便于更新）或 **Copy**。
 
+### 非交互安装（脚本化 / CI）
+
+```bash
+npx skills add mingdui/ming-qa --agent claude-code --yes \
+  -s quality-assurance-agent -s qa-context-profiler -s qa-risk-analyzer \
+  -s qa-testcase-designer -s qa-test-script-generator -s qa-test-runner \
+  -s qa-code-reviewer -s qa-report-generator
+```
+
+两个容易踩的点：
+
+- **`--agent` 的取值是 `claude-code`，不是 `claude`。** 传 `claude` 会直接报
+  `Invalid agents: claude` 并中止，不会安装任何东西。
+- **`--skill` 只接受单个精确名称。** 不支持逗号分隔，也不支持 `*` 这类通配符——
+  CLI 会把 `*` 当成**文件系统**通配符在你当前目录展开，于是报出
+  `No matching skills found for: AGENTS.md, README.md, src, …` 这种看似不相干的错误。
+  要装多个就重复写 `-s`；想装全部则省略 `--skill` 走交互式选择，或用 `--all`
+  （注意 `--all` 同时会把 agent 也设成 `*`，会写入本机所有 agent 的配置目录）。
+
 验证：
 
 ```bash

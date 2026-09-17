@@ -17,6 +17,13 @@ npx skills add mingdui/ming-qa -g
 /plugin marketplace add mingdui/ming-qa
 ```
 
+非交互安装（脚本化 / CI）的两个坑，完整写法见
+[docs/installation.md](../../docs/installation.md) 的「非交互安装」一节：
+
+- `--agent` 取值是 **`claude-code`**，不是 `claude`
+- `--skill` 只接受单个精确名称，不支持逗号或 `*`（`*` 会被当文件系统通配符展开），
+  要装多个就重复写 `-s`
+
 ## CLI 调用约定
 
 本目录及 7 个子 skill 的文档里出现的 `ming-qa <cmd>`，指的是本目录下的

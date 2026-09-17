@@ -32,6 +32,23 @@ cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude
 No shell profile is modified by any of these. See [docs/installation.md](docs/installation.md)
 for how to invoke the CLI and for troubleshooting.
 
+<details>
+<summary>Installing non-interactively (scripts / CI)</summary>
+
+```bash
+npx skills add mingdui/ming-qa --agent claude-code --yes \
+  -s quality-assurance-agent -s qa-context-profiler -s qa-risk-analyzer \
+  -s qa-testcase-designer -s qa-test-script-generator -s qa-test-runner \
+  -s qa-code-reviewer -s qa-report-generator
+```
+
+- The agent is named **`claude-code`**, not `claude`（`claude` aborts with `Invalid agents`）.
+- `--skill` takes one exact name at a time — no commas, no `*`. The CLI expands `*` as a
+  **filesystem** glob against your current directory, so it fails with a confusing
+  `No matching skills found for: AGENTS.md, src, …`. Repeat `-s` for each skill.
+
+</details>
+
 ## Quick start
 
 ```bash
