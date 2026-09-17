@@ -28,6 +28,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -356,9 +357,62 @@ def test_report_sections_render_actual_content(project):
         for probe in probes:
             assert probe in html, f"章节「{section}」未渲染出内容：{probe!r}"
 
-    # verdict 卡片的两个指标都要在，且不能互相替代
-    assert "通过率" in html, "verdict 卡片缺少通过率"
-    assert "验证覆盖" in html, "verdict 卡片缺少验证覆盖"
+    # ── 值级断言 ────────────────────────────────────────────────────────
+    #
+    # 只断言「章节存在」远远不够：字段口径不符通常**不会让整个章节消失**，
+    # 而是让它安静地渲染成 "-"、空值，或该有的徽章退化成兜底徽章。
+    # 实测过：把下面每个函数取字段的名字改成另一套命名（caseId→case_id 这类），
+    # 章节断言**一条都抓不住**。所以每条值级断言都钉住一个只有取对字段才可能
+    # 出现的内容。
+
+    # 用例矩阵：已执行的用例必须展示执行结果徽章。_find_run_for_case 或
+    # _render_case_row 读错字段时，行会退化成生命周期状态（小写 passed），
+    # 而这个断言要的是执行结果（大写 PASS）。
+    #
+    # 必须定位到「该用例那一行的状态格」再断言：执行证据区块里也有一个 PASS
+    # 徽章，全局搜 ">PASS<" 会被它满足，主状态列坏了也照样绿（实测踩过）。
+    case_row = re.search(
+        rf'<details class="case-row" id="{re.escape(cases[0]["id"])}">(.*?)</summary>',
+        html, re.S,
+    )
+    assert case_row, f"用例矩阵里找不到 {cases[0]['id']} 那一行"
+    assert 'class="b passed">PASS<' in case_row.group(1), (
+        "用例行状态列没展示执行结果——_find_run_for_case / _render_case_row "
+        "多半读错了字段，行退化成了生命周期状态"
+    )
+
+    # 执行摘要：模块名来自 scope.module
+    assert re.search(r"<dt>模块</dt>\s*<dd>[^<]*demo", html), (
+        "执行摘要未渲染出模块名——_render_executive_summary 的 scope 字段口径不符"
+    )
+
+    # 验收门禁：门禁结论必须渲染成真实状态（completion-check 判 failed）
+    assert re.search(r'<span class="b failed">failed</span>', html), (
+        "验收门禁未渲染出门禁状态——_render_gates 读错了 completion 字段"
+    )
+
+    # verdict 卡片：通过率与验证覆盖都必须是真实百分比，不是占位符 "-"
+    assert re.search(r'<div class="n">\d+%</div><div class="l">通过率', html), (
+        "通过率没渲染成百分比——_render_header_and_verdict 的 summary_stats 口径不符"
+    )
+    assert re.search(r'<div class="n">\d+%</div><div class="l">验证覆盖', html), (
+        "验证覆盖没渲染成百分比——同上"
+    )
+
+    # 风险：本 fixture 里每条风险都有用例覆盖。project_risk_coverage 若读错
+    # traceability，覆盖投影会是空的，所有风险一起退化成「缺口」。
+    #
+    # 断言徽章形式而不是裸的「已覆盖」——风险概览标题（「已覆盖 0 条」）里也有
+    # 这三个字，裸断言在投影为空时依然成立（实测踩过）。
+    assert re.search(r'class="b passed">已覆盖', html), (
+        "风险行没有渲染出「已覆盖」徽章——project_risk_coverage 读错 "
+        "traceability 会让已覆盖的风险全部退化成缺口"
+    )
+
+    # 附录：可信度签名必须是真实哈希，不是占位符
+    assert re.search(r"源指纹</dt>\s*<dd><code[^>]*>[0-9a-f]{32,}", html), (
+        "附录未渲染出源指纹哈希——_render_appendix 读错了 meta 字段"
+    )
 
 
 def test_update_results_consumes_aggregate_runs_output(project):
