@@ -3205,6 +3205,28 @@ def generate_spec_tasks(args: argparse.Namespace) -> None:
     print(f"已写入 spec tasks：{output}（{len(data.get('tasks', []))} 个任务）")
 
 
+def _task_risk_ids(task: dict[str, Any]) -> set[str]:
+    """收集一个 spec 任务关联的风险 ID。
+
+    生成器（generate-spec-tasks）把风险关联挂在 oracle 各项的 sourceRiskId 上，
+    并非任务级 traceability——而 traceability 是用例（cases[]）的字段。早期数据
+    可能两种都有，所以两处都读，避免门禁因字段口径不一致而恒判失败。
+    """
+    ids: set[str] = set()
+    for rid in task.get("traceability") or []:
+        if rid:
+            ids.add(str(rid))
+    oracle = task.get("oracle")
+    if isinstance(oracle, dict):
+        for items in oracle.values():
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if isinstance(item, dict) and item.get("sourceRiskId"):
+                    ids.add(str(item["sourceRiskId"]))
+    return ids
+
+
 def assert_oracle_mapping_data(
     risk_data: dict[str, Any],
     spec_tasks_data: dict[str, Any],
@@ -3231,7 +3253,7 @@ def assert_oracle_mapping_data(
         # Check if ALL of this risk's required assertions are mapped to tasks
         mapped_assertions = set()
         for task in tasks:
-            if risk_id in task.get("traceability", []):
+            if risk_id in _task_risk_ids(task):
                 # Task explicitly traces to this risk
                 task_text = json.dumps(task.get("oracle", {}), ensure_ascii=False) + json.dumps(task.get("assertions", []), ensure_ascii=False)
                 for assertion in required:
@@ -3272,12 +3294,12 @@ def assert_oracle_mapping(args: argparse.Namespace) -> None:
 
     if out:
         write_json(out, result)
-        logger.info(f"Oracle mapping gate: {result['status']} → {out}")
+        print(f"Oracle mapping gate: {result['status']} → {out}")
     else:
         print(json.dumps(result, indent=2, ensure_ascii=False))
 
     if result["status"] == "failed":
-        logger.error(f"Oracle mapping gate FAILED: {result['summary']['unmappedCount']} P0/P1 risks not covered")
+        print(f"Oracle mapping gate FAILED: {result['summary']['unmappedCount']} P0/P1 risks not covered")
         raise SystemExit(1)
 
 
@@ -5693,6 +5715,24 @@ def update_results(args: argparse.Namespace) -> None:
     for result in run_data.get("caseResults", []):
         if isinstance(result, dict) and result.get("caseId"):
             explicit_case_status[str(result["caseId"])] = result
+    # aggregate-runs 的产物键是 cases[]（每条带 finalOutcome），不是 caseResults[]——
+    # 而 caseResults[] 全仓库没有任何产出方。只认 caseResults 的后果是：每条用例的
+    # 真实执行证据永远落不到用例状态上，状态只能退化成「该层有没有配置门禁命令」，
+    # 于是 run-e2e 真跑过并通过的用例，会因为 e2e 层未配置命令而被判成 skipped。
+    # 显式 caseResults 优先，这里只做补充。
+    for result in run_data.get("cases", []):
+        if not isinstance(result, dict):
+            continue
+        case_id = result.get("caseId")
+        outcome = str(result.get("finalOutcome") or "").upper()
+        mapped = {"PASS": "passed", "FAIL": "failed"}.get(outcome)
+        if case_id and mapped and str(case_id) not in explicit_case_status:
+            explicit_case_status[str(case_id)] = {
+                "caseId": case_id,
+                "status": mapped,
+                "outcome": outcome,
+                "summary": f"来自 aggregate-runs 的逐用例执行证据（finalOutcome={outcome}）",
+            }
     gate_status: dict[str, str] = {}
     if "gate" in run_data:
         gate_status[run_data["gate"]] = run_data.get("status", EVIDENCE_MISSING)
@@ -8099,13 +8139,33 @@ def _render_case_row(case: dict, run_data: dict, spec_tasks: dict) -> str:
     {body}
   </details>'''
 
+def _finding_title(finding: dict) -> str:
+    """取 finding 的标题。
+
+    产物契约（references/code-review.md）里这个字段叫 title；本函数历史上读的是
+    summary，导致按契约产出的 code-review.json 渲染出空标题。按 title → summary
+    → message 依次回退，兼容两种写法。
+    """
+    for key in ("title", "summary", "message"):
+        value = finding.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
 # === 项目增强函数 (from project) ===
 def _render_code_review(cr_data: dict, review_scope: list[str] | None = None) -> str:
     findings = cr_data.get("findings", []) or []
     if not findings and not review_scope:
         return ""
-    cr_summary = cr_data.get("summary", {}) or {}
-    blocking = cr_summary.get("blocking", 0)
+    cr_summary = cr_data.get("summary")
+    if isinstance(cr_summary, dict):
+        blocking = cr_summary.get("blocking", 0)
+    else:
+        # 契约里 summary 是一句话结论（字符串），不是 {blocking: N} 字典。
+        # 传字符串时按其字段结构取 blocking 会抛 AttributeError 中断整份报告渲染，
+        # 这里退化成从 findings 的优先级现算。
+        blocking = sum(1 for f in findings if str(f.get("severity", "")).upper() in ("P0", "P1"))
     title_note = " · 均非阻塞，不阻塞本次合并" if blocking == 0 else f" · 含 {blocking} 条阻塞"
     # Summary table
     rows = ""
@@ -8113,7 +8173,7 @@ def _render_code_review(cr_data: dict, review_scope: list[str] | None = None) ->
         fid = html.escape(str(f.get("id", "-")))
         sev = str(f.get("severity", "")).upper()
         cat = _zh_cat(str(f.get("category", "")))
-        summary = html.escape(str(f.get("summary", "")))
+        summary = html.escape(_finding_title(f))
         rows += f'<tr><td><code>{fid}</code></td><td>{_pri_badge(sev)}</td><td>{cat}</td><td>{summary}</td><td>{_verdict_badge(str(f.get("verdict", "")))}</td></tr>'
 
     # Expandable details per finding
@@ -8124,12 +8184,12 @@ def _render_code_review(cr_data: dict, review_scope: list[str] | None = None) ->
         line = f.get("line")
         location = f"<code>{file}{':' + str(line) if line else ''}</code>"
         sev = str(f.get("severity", "")).upper()
-        summary = html.escape(str(f.get("summary", "")))
-        scenario = html.escape(str(f.get("failureScenario", "")))
+        summary = html.escape(_finding_title(f))
+        scenario = html.escape(str(f.get("failureScenario") or f.get("evidence") or ""))
         recommendation = html.escape(str(f.get("recommendation", "")))
         details_html += f'''
     <details>
-      <summary>{fid} · {_pri_badge(sev)} · {html.escape(str(f.get("summary",""))[:60])}</summary>
+      <summary>{fid} · {_pri_badge(sev)} · {html.escape(_finding_title(f)[:60])}</summary>
       <div class="details-body">
         <p><strong>位置：</strong>{location}</p>
         <p><strong>问题：</strong>{summary}</p>
