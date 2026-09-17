@@ -1,9 +1,13 @@
 param(
-  [ValidateSet("codex", "claude")]
-  [string]$Target = "claude",
+  # 规范名 claude-code（与 npx skills 等生态工具一致）；claude 保留为旧别名
+  [ValidateSet("codex", "claude-code", "claude")]
+  [string]$Target = "claude-code",
   [string]$SkillsPath = "",
   [switch]$Force
 )
+
+# 旧名 claude 归一为 claude-code
+if ($Target -eq "claude") { $Target = "claude-code" }
 
 $ErrorActionPreference = "Stop"
 $SkillRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -35,7 +39,7 @@ $fullCommand = $PythonCommand + $argsList
 
 $DestinationRoot = $SkillsPath
 if (-not $DestinationRoot) {
-  if ($Target -eq "claude") {
+  if ($Target -eq "claude-code") {
     $UserHome = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
     $DestinationRoot = Join-Path $UserHome ".claude\skills"
   } elseif ($env:CODEX_HOME) {

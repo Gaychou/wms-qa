@@ -46,6 +46,44 @@ STREAM_REQUIRED_MODELS = {"gpt-5.4"}
 DEFAULT_BASE_URL = ""
 DEFAULT_API_KEY_ENV = "QA_AGENT_LLM_API_KEY"
 DEFAULT_BASE_URL_ENV = "QA_AGENT_LLM_BASE_URL"
+
+# ── Agent 取值 ────────────────────────────────────────────────────────────
+# 规范名是 claude-code：Agent Skills 生态（npx skills 等）就是这么指代 Claude Code 的，
+# 用户在本 CLI 里要写的字面量应与之一致，否则同一个概念要记两套写法。
+#
+# 历史名 claude 保留为别名。QA_AGENT=claude 已经写进了既有项目的
+# .qa-agent/local/.env，直接改名会让那些项目静默失效。别名在 CLI 入口归一，
+# 内部一律按规范名比较。
+AGENT_CLAUDE = "claude-code"
+AGENT_CODEX = "codex"
+AGENT_BOTH = "both"
+AGENT_CHOICES = (AGENT_CLAUDE, AGENT_CODEX, AGENT_BOTH)
+_AGENT_NAME_ALIASES = {"claude": AGENT_CLAUDE}
+
+
+def normalize_agent_name(value: str) -> str:
+    """把 agent 取值归一为规范名（claude → claude-code；未知值原样返回）。"""
+    v = str(value or "").strip().lower()
+    return _AGENT_NAME_ALIASES.get(v, v)
+
+
+# Playwright 自己的 `init-agents` 用的是**另一套** loop 词表
+# （claude / codex / copilot / opencode / vscode / vscode-legacy）。
+# 本 CLI 的 agent 规范名是 claude-code，直接透传会被 npx 拒绝：
+#   option '--loop <loop>' argument 'claude-code' is invalid.
+#   Allowed choices are claude, codex, copilot, opencode, vscode, vscode-legacy.
+# 所以在本 CLI 边界内统一用 claude-code，只在调用 Playwright 时翻译回它的写法。
+_PLAYWRIGHT_LOOP_NAMES = {AGENT_CLAUDE: "claude", AGENT_CODEX: "codex"}
+
+
+def playwright_loop_name(agent: str) -> str:
+    """把本 CLI 的 agent 名翻译成 Playwright init-agents 能接受的 --loop 取值。
+
+    未知取值原样返回——Playwright 支持的 loop 不止 claude/codex
+    （copilot / opencode / vscode 等），不应该在本 CLI 里把它们拦掉。
+    """
+    name = normalize_agent_name(agent)
+    return _PLAYWRIGHT_LOOP_NAMES.get(name, name)
 PLAYWRIGHT_TEMPLATE_ASSET_MAP = {
     ".codex/agents/README.md": ASSETS / "playwright" / "README.md",
     ".codex/agents/playwright_test_planner.toml": ASSETS / "playwright" / "playwright_test_planner.toml",
@@ -1305,7 +1343,7 @@ def required_playwright_agent_files(loop: str) -> set[str]:
             ".codex/agents/playwright_test_generator.toml",
             ".codex/agents/playwright_test_healer.toml",
         }
-    if loop == "claude":
+    if loop == AGENT_CLAUDE:
         return {
             ".claude/agents/playwright-test-planner.md",
             ".claude/agents/playwright-test-generator.md",
@@ -1380,7 +1418,7 @@ def install_playwright_agents_in_repo(
     command = [npx]
     if not no_yes:
         command.append("-y")
-    command.extend(["playwright", "init-agents", f"--loop={loop}"])
+    command.extend(["playwright", "init-agents", f"--loop={playwright_loop_name(loop)}"])
     if dry_run:
         return {
             "status": "dry-run",
@@ -2056,31 +2094,32 @@ def install_mysql_mcp(args: argparse.Namespace) -> None:
 
 
 def configure_mysql_mcp(repo: Path, agent: str) -> dict[str, Any]:
-    """按 agent 配置 mysql_mcp，返回结构化结果 {claude: 结果, codex: 结果}。
+    """按 agent 配置 mysql_mcp，返回结构化结果 {claude-code: 结果, codex: 结果}。
 
-    agent: claude → 只 .mcp.json；codex → 只 .codex/config.toml；both → 两者。
+    agent: claude-code → 只 .mcp.json；codex → 只 .codex/config.toml；both → 两者。
     两边都是 upsert，不覆盖其他 MCP 配置。
     """
+    agent = normalize_agent_name(agent)
     result: dict[str, Any] = {}
-    if agent in {"claude", "both"}:
-        result["claude"] = upsert_mysql_mcp_entry(repo)
+    if agent in {AGENT_CLAUDE, AGENT_BOTH}:
+        result[AGENT_CLAUDE] = upsert_mysql_mcp_entry(repo)
     if agent in {"codex", "both"}:
-        result["codex"] = generate_codex_mysql_mcp(repo)
+        result[AGENT_CODEX] = generate_codex_mysql_mcp(repo)
     return result
 
 
 def config_mysql_mcp(args: argparse.Namespace) -> None:
     """根据 .env 的 QA_AGENT 配置 mysql_mcp（claude→.mcp.json，codex→.codex/config.toml，both→两者）。"""
     repo = Path(args.repo).resolve()
-    agent = qa_env_value(repo, "QA_AGENT") or "claude"
+    agent = normalize_agent_name(qa_env_value(repo, "QA_AGENT") or AGENT_CLAUDE)
     configured = configure_mysql_mcp(repo, agent)
-    cred = configured.get("claude")
+    cred = configured.get(AGENT_CLAUDE)
     if cred is not None:
         if cred["generated"]:
             print(f"已生成 MySQL MCP 配置（Claude Code）：{cred['mcpPath']}")
         elif cred.get("reason"):
             print(f"跳过 MySQL MCP：{cred['reason']}")
-    codex = configured.get("codex")
+    codex = configured.get(AGENT_CODEX)
     if codex is not None:
         if codex.get("generated"):
             print(f"已生成 MySQL MCP 配置（Codex）：{codex['codexConfigPath']}")
@@ -5433,7 +5472,7 @@ def env_example_text(accounts: list[dict[str, Any]], services: list[dict[str, An
     """生成 local/.env 模板：密钥、账号凭证和可覆盖的服务地址，按组划分。"""
     sections: list[tuple[str, list[tuple[str, str, str]]]] = [
         ("Agent", [
-            ("QA_AGENT", "claude", "使用的 agent：claude / codex / both"),
+            ("QA_AGENT", AGENT_CLAUDE, "使用的 agent：claude-code / codex / both"),
         ]),
         ("LLM", [
             ("QA_AGENT_LLM_BASE_URL", "", "LLM 网关地址（覆盖 env.shared 默认值）"),
@@ -5536,7 +5575,7 @@ def init_project(args: argparse.Namespace) -> None:
         argparse.Namespace(
             output=str(config_path),
             repo=str(repo),
-            agent=getattr(args, "agent", "claude"),
+            agent=normalize_agent_name(getattr(args, "agent", AGENT_CLAUDE)),
         )
     )
     profile = detect_project_test_profile(repo)
@@ -5557,7 +5596,7 @@ def init_project(args: argparse.Namespace) -> None:
     write_text_if_needed(Path(written["envShared"]), env_shared_text([], services), force=False)
     write_json_if_needed(Path(written["servicesConfig"]), services_data, force=force)
     write_text_if_needed(Path(written["localEnv"]), env_example_text([], services), force=False)
-    agent = getattr(args, "agent", "claude")
+    agent = normalize_agent_name(getattr(args, "agent", AGENT_CLAUDE))
     _set_env_key(Path(written["localEnv"]), "QA_AGENT", agent)
     seed_playwright_templates(repo, force=force)
     seed_e2e_lib(repo, force=force)
@@ -5649,14 +5688,14 @@ def init_config(args: argparse.Namespace) -> None:
     if not repo.exists():
         return
 
-    agent = getattr(args, "agent", "claude")
-    loops = ["claude", "codex"] if agent == "both" else [agent]
+    agent = normalize_agent_name(getattr(args, "agent", AGENT_CLAUDE))
+    loops = [AGENT_CLAUDE, AGENT_CODEX] if agent == AGENT_BOTH else [agent]
     # 从 .env 自动生成 MySQL 凭证（共用，只跑一次）
     cred = upsert_mysql_mcp_entry(repo)
     if cred["generated"]:
         print(f"已生成 MySQL MCP 配置：{cred['mcpPath']}")
     # Codex：生成项目级 .codex/config.toml（agent=claude 时跳过）
-    if agent != "claude":
+    if agent != AGENT_CLAUDE:
         codex = generate_codex_mcp_from_project(repo)
         if codex["generated"]:
             print(f"已生成 Codex MCP 配置：{codex['codexConfigPath']}")
@@ -6121,7 +6160,7 @@ def run_e2e(args: argparse.Namespace) -> None:
 
 def default_skills_dir(target: str) -> Path:
     """按 target 返回用户级 skills 目录。"""
-    if target == "claude":
+    if normalize_agent_name(target) == AGENT_CLAUDE:
         return resolve_home_dir() / ".claude" / "skills"
     return default_codex_skills_dir()
 
@@ -6159,7 +6198,7 @@ def _validate_skill(destination_root: Path) -> None:
 
 
 def install_skill(args: argparse.Namespace) -> None:
-    if args.target not in ("claude", "codex"):
+    if normalize_agent_name(args.target) not in (AGENT_CLAUDE, AGENT_CODEX):
         raise QaAgentError(f"Unsupported target: {args.target}")
     destination_root = Path(args.path).resolve() if args.path else default_skills_dir(args.target)
     source_root = ROOT.parent  # 开发仓库 .claude/skills/，含 8 个 skill 目录
@@ -6408,8 +6447,8 @@ def doctor(args: argparse.Namespace) -> None:
                 True,
                 'quote multi-class selectors, for example: mvn -q "-Dtest=A,B" test',
             )
-        agent = getattr(args, "agent", "claude")
-        loops = ["claude", "codex"] if agent == "both" else [agent]
+        agent = normalize_agent_name(getattr(args, "agent", AGENT_CLAUDE))
+        loops = [AGENT_CLAUDE, AGENT_CODEX] if agent == AGENT_BOTH else [agent]
 
         # Playwright Test Agents（每个 loop 独立安装）
         for loop in loops:
@@ -6485,13 +6524,13 @@ def doctor(args: argparse.Namespace) -> None:
         # MySQL MCP 配置：仅 --config-mysql-mcp 时执行（doctor 默认只检查，不改配置），复用 configure_mysql_mcp 配两边
         if getattr(args, "config_mysql_mcp", False):
             configured = configure_mysql_mcp(repo, "both")
-            cred = configured.get("claude")
+            cred = configured.get(AGENT_CLAUDE)
             if cred is not None and cred["generated"]:
                 add("mysql_mcp_entry", True, cred["mcpPath"], required=False)
             elif cred is not None and "缺少" in cred.get("reason", ""):
                 add("mysql_db_config", False, cred.get("reason", "未配置数据库"), required=False,
                     next_action="如验收涉及数据库，请在 config/env.shared 配置 QA_MYSQL_HOST/USER 后重跑")
-            codex = configured.get("codex")
+            codex = configured.get(AGENT_CODEX)
             if codex is not None and codex["generated"]:
                 add("mysql_codex_config", True, codex["codexConfigPath"], required=False)
             elif codex is not None and codex.get("reason"):
@@ -9952,7 +9991,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", default=".")
     p.add_argument("--force", action="store_true", help="覆盖已生成的模板和 profile（不会覆盖本地密钥文件）")
     p.add_argument("--root-gitignore", action="store_true", help="追加推荐的根目录 .gitignore 片段")
-    p.add_argument("--agent", default="claude", choices=["claude", "codex", "both"], help="Agent 类型：claude / codex / both（两者都装，不覆盖已存在的）")
+    p.add_argument("--agent", default=AGENT_CLAUDE, type=normalize_agent_name, choices=list(AGENT_CHOICES),
+                   help="Agent 类型：claude-code / codex / both（两者都装，不覆盖已存在的）。兼容旧名 claude")
     p.add_argument("--verify-mysql-mcp", action="store_true", help="初始化后短暂启动 mysql_mcp 以验证数据库连通性")
     p.add_argument("--mysql-mcp-timeout", type=int, default=12, help="--verify-mysql-mcp 的连接超时秒数（默认 12）")
     p.add_argument("--skip-playwright-runtime", action="store_true", help="初始化时不自动安装 Playwright 运行时（@playwright/test + 浏览器）")
@@ -9962,7 +10002,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init-config", help="write example config")
     p.add_argument("--output", default=".qa-agent/config/qa-agent.config.yaml")
     p.add_argument("--repo", default=".", help="target repo for optional Playwright Test Agents auto-install")
-    p.add_argument("--loop", default="codex", choices=["codex", "claude"], help="agent loop for Playwright Test Agents")
+    p.add_argument("--loop", default=AGENT_CODEX, type=normalize_agent_name, choices=[AGENT_CODEX, AGENT_CLAUDE],
+                   help="agent loop for Playwright Test Agents（codex / claude-code）")
     p.add_argument("--timeout", type=int, default=300)
     p.add_argument("--skip-playwright-agents", action="store_true", help="only write config; do not auto-install Playwright Test Agents")
     p.add_argument("--skip-detect-commands", action="store_true", help="write the generic example config instead of detected project commands")
@@ -9977,7 +10018,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("init", help="initialize .qa-agent config")
     p.add_argument("--output", default=".qa-agent/config/qa-agent.config.yaml")
     p.add_argument("--repo", default=".", help="target repo for optional Playwright Test Agents auto-install")
-    p.add_argument("--loop", default="codex", choices=["codex", "claude"], help="agent loop for Playwright Test Agents")
+    p.add_argument("--loop", default=AGENT_CODEX, type=normalize_agent_name, choices=[AGENT_CODEX, AGENT_CLAUDE],
+                   help="agent loop for Playwright Test Agents（codex / claude-code）")
     p.add_argument("--timeout", type=int, default=300)
     p.add_argument("--skip-playwright-agents", action="store_true", help="only write config; do not auto-install Playwright Test Agents")
     p.add_argument("--skip-detect-commands", action="store_true", help="write the generic example config instead of detected project commands")
@@ -10200,7 +10242,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", default=".")
     p.add_argument("--json")
     p.add_argument("--strict", action="store_true")
-    p.add_argument("--agent", default="claude", choices=["claude", "codex", "both"], help="Agent 类型：claude / codex / both")
+    p.add_argument("--agent", default=AGENT_CLAUDE, type=normalize_agent_name, choices=list(AGENT_CHOICES),
+                   help="Agent 类型：claude-code / codex / both。兼容旧名 claude")
     p.add_argument("--check-services", action="store_true", help="探测 .qa-agent/local/.env 中配置的服务 URL 可达性")
     p.add_argument("--auto-start", action="store_true", help="若服务不可达则自动启动（使用 init 推导的 startCmd/readySignal/dir，可在 services.local.json 覆盖）")
     p.add_argument("--no-kill", action="store_true", help="--auto-start 时不杀占用端口的旧进程，仅跳过")
@@ -10232,7 +10275,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("install-playwright-agents", help="install official Playwright Test Agents")
     p.add_argument("--repo", default=".")
-    p.add_argument("--loop", default="codex")
+    # 不设 choices：取值最终透传给 Playwright init-agents，除 claude/codex 外它还支持
+    # copilot / opencode / vscode 等。这里只做旧名归一（claude → claude-code），
+    # 调用 Playwright 时再翻译回去。
+    p.add_argument("--loop", default=AGENT_CODEX, type=normalize_agent_name,
+                   help="Playwright Test Agents 的 loop（claude-code / codex / copilot / opencode / vscode…）")
     p.add_argument("--timeout", type=int, default=300)
     p.add_argument("--skip-if-present", action="store_true")
     p.add_argument("--dry-run", action="store_true")
@@ -10260,7 +10307,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=config_mysql_mcp)
 
     p = sub.add_parser("install-skill", help="install this skill into a supported agent")
-    p.add_argument("--target", default="codex", choices=["claude", "codex"])
+    p.add_argument("--target", default=AGENT_CODEX, type=normalize_agent_name,
+                   choices=[AGENT_CLAUDE, AGENT_CODEX],
+                   help="安装目标 agent：claude-code / codex。兼容旧名 claude")
     p.add_argument("--path", help="skills directory; defaults by target")
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=install_skill)

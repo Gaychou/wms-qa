@@ -17,7 +17,8 @@ fi
 
 skills_path=""
 force=""
-target="claude"
+# 规范名 claude-code（与 npx skills 等生态工具一致）；claude 保留为旧别名
+target="claude-code"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -30,17 +31,22 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --target)
-      target=${2:-claude}
+      target=${2:-claude-code}
+      # 旧名 claude 归一为 claude-code
+      case "$target" in
+        claude) target="claude-code" ;;
+      esac
       shift 2
       ;;
     --help|-h)
       cat <<'EOF'
-Usage: ./install.sh [--target claude|codex] [--skills-path PATH] [--force]
+Usage: ./install.sh [--target claude-code|codex] [--skills-path PATH] [--force]
 
 For macOS, Linux, and Windows Git Bash / MSYS / WSL.
 On native Windows CMD / PowerShell, use install.ps1 instead.
 
-  --target claude|codex Install into Claude Code or Codex skills dir (default claude)
+  --target claude-code|codex  Install into Claude Code or Codex skills dir
+                              (default claude-code; legacy name "claude" still accepted)
   --skills-path PATH   Install into a custom skills directory
   --force              Overwrite an existing installation
 
@@ -73,7 +79,7 @@ fi
 
 if [ -n "$skills_path" ]; then
   destination_root="$skills_path"
-elif [ "$target" = "claude" ]; then
+elif [ "$target" = "claude-code" ]; then
   destination_root="$HOME/.claude/skills"
 elif [ -n "${CODEX_HOME:-}" ]; then
   destination_root="$CODEX_HOME/skills"

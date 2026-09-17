@@ -71,8 +71,8 @@ npx skills update ming-qa -g
 git clone https://github.com/mingdui/ming-qa.git
 cd ming-qa/skills/quality-assurance-agent
 
-./install.sh --target claude          # macOS / Linux / Git Bash
-.\install.ps1 -Target claude          # Windows PowerShell
+./install.sh --target claude-code     # macOS / Linux / Git Bash
+.\install.ps1 -Target claude-code     # Windows PowerShell
 ```
 
 脚本**只把 skill 文件复制到目标 skills 目录**，不会修改你的 `~/.bashrc`、
@@ -87,13 +87,13 @@ CLI 由 skill 内的脚本提供。装了 pipx 之外的任何方式，都通过
 
 ```bash
 # macOS / Linux / Git Bash
-python ~/.claude/skills/quality-assurance-agent/scripts/qa_agent.py init-project --repo . --agent claude
+python ~/.claude/skills/quality-assurance-agent/scripts/qa_agent.py init-project --repo . --agent claude-code
 
 # Windows PowerShell
-python "$env:USERPROFILE\.claude\skills\quality-assurance-agent\scripts\qa_agent.py" init-project --repo . --agent claude
+python "$env:USERPROFILE\.claude\skills\quality-assurance-agent\scripts\qa_agent.py" init-project --repo . --agent claude-code
 ```
 
-`--agent` 可选 `claude` / `codex` / `both`。
+`--agent` 可选 `claude-code` / `codex` / `both`（旧名 `claude` 仍兼容）。
 
 > 若已把 skill 的 `bin/` 加进 PATH，或自行做了别名，可直接用 `ming-qa init-project ...`。
 > 下文为简洁一律写 `ming-qa <cmd>`，按上面的路径替换即可。

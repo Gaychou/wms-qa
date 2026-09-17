@@ -26,7 +26,7 @@ npx skills add mingdui/ming-qa -g
 
 # Option 3: from source (offline / custom install location)
 git clone https://github.com/mingdui/ming-qa.git
-cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude
+cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude-code
 ```
 
 No shell profile is modified by any of these. See [docs/installation.md](docs/installation.md)
@@ -55,7 +55,7 @@ npx skills add mingdui/ming-qa --agent claude-code --yes \
 cd your-project
 
 # Initialise: creates .qa-agent/, config templates, and the Playwright E2E setup
-ming-qa init-project --repo . --agent claude     # claude / codex / both
+ming-qa init-project --repo . --agent claude-code  # claude-code / codex / both
 
 # Fill in your secrets (git-ignored, never commit this)
 #   .qa-agent/local/.env
