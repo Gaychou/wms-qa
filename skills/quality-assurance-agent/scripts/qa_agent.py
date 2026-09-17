@@ -4498,6 +4498,10 @@ def assert_report_freshness(args: argparse.Namespace) -> None:
             }
             source_files.append(entry)
             if not path.exists():
+                if label in OPTIONAL_REPORT_SOURCES:
+                    # 按需产出的源缺失 = 本轮走的是复用路径，不是报告陈旧
+                    entry["optional"] = True
+                    continue
                 findings.append({"type": "source-missing", "severity": "fail", "source": label, "path": str(path)})
                 continue
             if path.stat().st_mtime > report_mtime + 1e-9:
@@ -6717,6 +6721,17 @@ def collect_spec_task_entries(spec_tasks_data: Any) -> list[dict[str, Any]]:
 
     visit(spec_tasks_data)
     return entries
+
+
+# 按需产出的报告源：只在「本轮重新生成用例」那条路径上存在。
+#
+# test-cases.generated.json 由用例设计阶段产出；而复用已 promote 的用例集
+# （.qa-agent/cases/*.json → current/test-cases.json，promote-cases 的设计意图，
+# 回归运行正是这个场景）时本来就没有这个文件。把它的缺失当作「报告陈旧」会让
+# 任何复用路径的运行永远判 Not Ready。
+#
+# 注意只放宽「缺失」：若它存在却比报告新，仍按陈旧拦截——那才是真正的陈旧。
+OPTIONAL_REPORT_SOURCES = {"generated-cases"}
 
 
 def collect_report_source_paths(args: argparse.Namespace) -> list[tuple[str, Path]]:
