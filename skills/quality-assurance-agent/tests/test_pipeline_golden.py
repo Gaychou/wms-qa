@@ -297,6 +297,8 @@ def _advance_to_report(repo: Path, current: Path) -> Path:
         assert "Traceback" not in proc.stderr, f"{label} 崩溃：{_out(proc)}"
 
     # 按契约形状写 code-review（summary 是字符串，finding 用 title/evidence）
+    # category / verdict 是给 _zh_cat / _verdict_badge 用的映射表输入：
+    # 它们读错值域时会静默退化成英文或兜底样式，必须由断言钉住。
     (current / "code-review.json").write_text(json.dumps({
         "status": "failed",
         "summary": "一句话结论（契约里 summary 是字符串）",
@@ -306,8 +308,14 @@ def _advance_to_report(repo: Path, current: Path) -> Path:
             "file": "src/main/java/demo/PayService.java", "line": 3,
             "title": "扣减缺少幂等保护", "evidence": "第 3 行未见去重键",
             "recommendation": "增加幂等键",
+            "category": "data-consistency", "verdict": "CONFIRMED",
         }],
         "residualRisks": [], "deferredFindings": [],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    # readiness：让 _verdict_class 走一条真实分支（而不是空 readiness 的兜底）
+    (current / "readiness-check.json").write_text(json.dumps({
+        "status": "failed", "decision": "Not Ready",
     }, ensure_ascii=False), encoding="utf-8")
 
     report = current.parent / "reports" / "latest-report.html"
@@ -319,6 +327,7 @@ def _advance_to_report(repo: Path, current: Path) -> Path:
                 "--completion-check", str(current / "completion-check.json"),
                 "--risk-analysis", str(current / "risk-analysis.json"),
                 "--code-review", str(current / "code-review.json"),
+                "--readiness-check", str(current / "readiness-check.json"),
                 "--title", "金样测试报告",
                 "--output", str(report))
     assert "Traceback" not in proc.stderr, f"渲染崩溃：{_out(proc)}"
@@ -347,7 +356,9 @@ def test_report_sections_render_actual_content(project):
     expectations = [
         ("执行摘要", ["本轮范围", "本次交付"]),
         ("验收门禁", ["验收完备度"]),
-        ("代码审查", ["扣减缺少幂等保护", "第 3 行未见去重键"]),
+        # 后两项走映射表：_zh_cat（类别）与 _verdict_badge→_zh_verdict（处置）。
+        # 映射键抄错不会报错，只会静默显示成英文原值或兜底标签。
+        ("代码审查", ["扣减缺少幂等保护", "第 3 行未见去重键", "数据一致", "待修复"]),
         ("风险与覆盖缺口", ["风险明细", risks[0]["id"]]),
         ("用例矩阵", ["用例矩阵", cases[0]["id"]]),
         ("附录", ["附录"]),
@@ -380,6 +391,12 @@ def test_report_sections_render_actual_content(project):
         "用例行状态列没展示执行结果——_find_run_for_case / _render_case_row "
         "多半读错了字段，行退化成了生命周期状态"
     )
+    # 优先级徽章：_pri_badge 的值域若抄成别项目的（CRITICAL/HIGH…），
+    # 所有 P0-P3 会静默退化成 mute 样式，标签却还写着 P1。
+    pri = cases[0]["priority"]
+    assert f'class="b {pri.lower()}">{pri}<' in case_row.group(1), (
+        f"用例行优先级徽章样式不对——_pri_badge 的值域与 P0-P3 对不上（期望 {pri}）"
+    )
 
     # 执行摘要：模块名来自 scope.module
     assert re.search(r"<dt>模块</dt>\s*<dd>[^<]*demo", html), (
@@ -389,6 +406,13 @@ def test_report_sections_render_actual_content(project):
     # 验收门禁：门禁结论必须渲染成真实状态（completion-check 判 failed）
     assert re.search(r'<span class="b failed">failed</span>', html), (
         "验收门禁未渲染出门禁状态——_render_gates 读错了 completion 字段"
+    )
+
+    # 顶部判定徽章走 _verdict_class 的 decision 映射。fixture 传的是
+    # decision="Not Ready"，对应文案「暂不建议合并」；读错字段会落到兜底文案
+    # 「验收未完成」，两者都不会报错，只能靠断言区分。
+    assert "暂不建议合并" in html, (
+        "判定徽章文案不对——_verdict_class 读错了 readiness 的 decision 字段"
     )
 
     # verdict 卡片：通过率与验证覆盖都必须是真实百分比，不是占位符 "-"
