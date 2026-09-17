@@ -3231,14 +3231,27 @@ def assert_oracle_mapping_data(
     risk_data: dict[str, Any],
     spec_tasks_data: dict[str, Any],
 ) -> dict[str, Any]:
-    """Verify every P0/P1 risk's requiredAssertions appear in at least one spec-task's oracle or assertions.
+    """校验每条 P0/P1 风险是否被 spec 任务的 oracle 断言覆盖。
 
-    Returns a gate result with status 'passed' or 'failed' and findings for unmapped risks.
+    判据是「覆盖」，不是「文本等价」。
+
+    风险的 requiredAssertions 是抽象业务类目（「金额计算正确」「重复提交不重复发放」），
+    而任务侧 oracle 断言是具体到实现的说法（「余额扣减金额与商品单价一致」
+    「余额流水与扣款一一对应且恒等」）。两者语义等价、用词不同，精确子串匹配
+    永远为 0——曾经的实现因此对任何真实产物都恒判失败，门禁形同虚设。
+
+    改为：每条 P0/P1 风险至少要有一条携带其 sourceRiskId 的 oracle 断言。
+    这能抓住真正可行动的信号——某条风险根本没有任何测试覆盖；而「断言内容是否
+    等价」属于人的判断，交给代码审查，门禁不该假装能做。
+
+    文本命中的情况仍记录在 assertionTextMatch 里（informational，不参与判定），
+    审查时可参考。
     """
     risks = risk_data.get("risks", [])
     tasks = spec_tasks_data.get("tasks", [])
 
     findings: list[dict[str, Any]] = []
+    checked = 0
 
     for risk in risks:
         risk_id = risk.get("id", "")
@@ -3246,28 +3259,42 @@ def assert_oracle_mapping_data(
         if priority not in ("P0", "P1"):
             continue
 
-        required = risk.get("requiredAssertions", [])
+        required = risk.get("requiredAssertions", []) or []
         if not required:
+            # 没有断言的风险没有可校验的内容，跳过（保持既有契约，避免噪音）
             continue
+        checked += 1
 
-        # Check if ALL of this risk's required assertions are mapped to tasks
-        mapped_assertions = set()
+        # 该风险被多少条 oracle 断言显式关联（sourceRiskId 指向它）
+        linked_count = 0
+        text_hits: list[str] = []
         for task in tasks:
-            if risk_id in _task_risk_ids(task):
-                # Task explicitly traces to this risk
-                task_text = json.dumps(task.get("oracle", {}), ensure_ascii=False) + json.dumps(task.get("assertions", []), ensure_ascii=False)
-                for assertion in required:
-                    if assertion in task_text:
-                        mapped_assertions.add(assertion)
+            if risk_id not in _task_risk_ids(task):
+                continue
+            for items in (task.get("oracle") or {}).values():
+                if not isinstance(items, list):
+                    continue
+                for item in items:
+                    if isinstance(item, dict) and str(item.get("sourceRiskId") or "") == risk_id:
+                        linked_count += 1
+            task_text = json.dumps(task.get("oracle", {}), ensure_ascii=False) + json.dumps(
+                task.get("assertions", []), ensure_ascii=False
+            )
+            for assertion in required:
+                if assertion in task_text and assertion not in text_hits:
+                    text_hits.append(assertion)
 
-        missing = [a for a in required if a not in mapped_assertions]
-        if missing:
+        if linked_count == 0:
             findings.append({
                 "riskId": risk_id,
                 "priority": priority,
                 "category": risk.get("category", ""),
-                "missingAssertions": missing,
-                "message": f"Risk {risk_id} ({priority}): {len(missing)}/{len(required)} requiredAssertions not found in spec-task oracle/assertions",
+                "requiredAssertions": required,
+                "assertionTextMatch": text_hits,
+                "message": (
+                    f"Risk {risk_id} ({priority}): 没有任何 spec 任务的 oracle 断言关联到该风险"
+                    "——该风险在测试中完全没有覆盖"
+                ),
             })
 
     return {
@@ -3275,7 +3302,7 @@ def assert_oracle_mapping_data(
         "generatedAt": utc_now(),
         "status": "failed" if findings else "passed",
         "summary": {
-            "totalRisksChecked": len([r for r in risks if str(r.get("priority", "")).upper() in ("P0", "P1")]),
+            "totalRisksChecked": checked,
             "unmappedCount": len(findings),
         },
         "findings": findings,
