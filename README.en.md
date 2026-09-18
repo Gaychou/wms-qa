@@ -51,39 +51,32 @@ npx skills add mingdui/ming-qa --agent claude-code --yes \
 
 ## Quick start
 
-```bash
-cd your-project
-
-# Initialise: creates .qa-agent/, config templates, and the Playwright E2E setup
-ming-qa init-project --repo . --agent claude-code  # claude-code / codex / both
-
-# Fill in your secrets (git-ignored, never commit this)
-#   .qa-agent/local/.env
-
-# Environment check
-ming-qa doctor --repo . --strict --check-services
-```
-
-> `ming-qa` lives in the skill's `bin/` directory and **is not added to PATH by the
-> installer**. Either add that directory to PATH, or call the script directly:
->
-> ```bash
-> python .claude/skills/quality-assurance-agent/scripts/qa_agent.py init-project --repo . --agent claude-code
-> ```
->
-> On Windows PowerShell use `python .claude\skills\...` (backslashes).
-
-Then, in your agent:
+Once installed there is **no command to type**. In Claude Code / Codex, just say:
 
 ```
 Use quality-assurance-agent to run acceptance testing on <your module>
 ```
 
-The orchestrator pauses when the test cases are ready and waits for your
-approval. Everything after that runs automatically.
+The agent initialises the project, checks the environment, installs whatever
+toolchain the scope needs — and stops only where you are actually required:
 
-Already-verified module? Just ask for a regression — existing cases and scripts
-are reused.
+1. **Fill in config** — it tells you which values are missing and where they go
+   (`.qa-agent/local/.env`, git-ignored). Only the test account is required; the
+   LLM key is an optional cross-review enhancement and its stage is skipped without it.
+2. **Confirm the test cases** — the single mandatory human gate in the whole flow.
+3. Everything after that runs automatically: scripts, execution and repair, code
+   review, report.
+
+### Running the CLI by hand
+
+The CLI lives at the skill's `scripts/qa_agent.py` and is **not distributed as a
+PATH command**. Resolve the directory first:
+
+```bash
+QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+python "$QA_AGENT_DIR/scripts/qa_agent.py" doctor --repo . --strict --check-services
+```
+
 
 ## What it produces
 

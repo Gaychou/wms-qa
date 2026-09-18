@@ -26,18 +26,16 @@ npx skills add mingdui/ming-qa -g
 
 ## CLI 调用约定
 
-本目录及 7 个子 skill 的文档里出现的 `ming-qa <cmd>`，指的是本目录下的
-`scripts/qa_agent.py`，按以下优先级解析：
+本目录及 7 个子 skill 的文档里，命令一律通过 `scripts/qa_agent.py` 执行。
+它**不作为 PATH 上的命令分发**——命令由 agent 执行，人不需要手敲。
 
-1. `$QA_AGENT_CLI` 环境变量
-2. PATH 上的 `ming-qa`（把本 skill 的 `bin/` 目录加入 PATH 后可用）
-3. 本目录内的 `scripts/qa_agent.py`
-
-例如 `ming-qa doctor --repo .` 在没有全局命令时等价于：
+先解析一次 skill 目录，之后所有命令写成 `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
 
 ```bash
-python /path/to/quality-assurance-agent/scripts/qa_agent.py doctor --repo .
+QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
 ```
+
+运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 
 ## 工作流
 

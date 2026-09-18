@@ -19,16 +19,16 @@ Playwright Test Agent 支持多种 agent 类型，通过 `--loop` 参数区分�
 
 ```bash
 # Claude Code
-ming-qa install-playwright-agents --repo . --loop claude-code --skip-if-present
+python "$QA_AGENT_DIR/scripts/qa_agent.py"install-playwright-agents --repo . --loop claude-code --skip-if-present
 
 # Codex
-ming-qa install-playwright-agents --repo . --loop codex --skip-if-present
+python "$QA_AGENT_DIR/scripts/qa_agent.py"install-playwright-agents --repo . --loop codex --skip-if-present
 ```
 
 也可以在项目初始化时一并安装：
 
 ```bash
-ming-qa init-project --repo . --install-playwright-agents --loop claude-code
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo . --install-playwright-agents --loop claude-code
 ```
 
 ### 运行时与浏览器（跑 spec 的硬依赖，与 agents 定义分离）
@@ -37,7 +37,7 @@ ming-qa init-project --repo . --install-playwright-agents --loop claude-code
 
 ```bash
 # 装 @playwright/test（声明 + node_modules）+ chromium 浏览器二进制（幂等，已就绪则跳过）
-ming-qa install-playwright-runtime --repo . --skip-if-present
+python "$QA_AGENT_DIR/scripts/qa_agent.py"install-playwright-runtime --repo . --skip-if-present
 ```
 
 三层就绪模型（doctor 分别检测，不要混为一谈）：

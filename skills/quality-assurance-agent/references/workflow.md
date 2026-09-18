@@ -5,13 +5,13 @@
 For a new repo, run the one-command setup first:
 
 ```bash
-ming-qa init-project --repo .
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo .
 ```
 
 The user fills `.qa-agent/local/.env` only. Validate required local values with:
 
 ```bash
-ming-qa doctor --repo . --strict --check-services
+python "$QA_AGENT_DIR/scripts/qa_agent.py"doctor --repo . --strict --check-services
 ```
 
 Do not continue to model review or E2E when required API keys, account env vars, or required service URLs are missing.
@@ -19,7 +19,7 @@ Do not continue to model review or E2E when required API keys, account env vars,
 Only use these explicit installers when the user wants external tool config changed:
 
 ```bash
-ming-qa init-project --repo . --install-playwright-agents --install-mysql-mcp --verify-mysql-mcp
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo . --install-playwright-agents --install-mysql-mcp --verify-mysql-mcp
 ```
 
 ## Phase 0.5: Scope Lock And Precheck Confirmation
@@ -90,9 +90,9 @@ Render `test-cases.html` for human confirmation.
 Recommended deterministic sequence:
 
 ```bash
-ming-qa index-existing-cases --repo . --output .qa-agent/current/existing-case-index.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"index-existing-cases --repo . --output .qa-agent/current/existing-case-index.json
 # Generate candidate gaps as .qa-agent/current/test-cases.generated.json
-ming-qa merge-existing-cases --repo . --generated .qa-agent/current/test-cases.generated.json --existing-index .qa-agent/current/existing-case-index.json --output .qa-agent/current/test-cases.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"merge-existing-cases --repo . --generated .qa-agent/current/test-cases.generated.json --existing-index .qa-agent/current/existing-case-index.json --output .qa-agent/current/test-cases.json
 ```
 
 After rendering, print a concise Chinese test-case summary table in the chat. Do not only provide artifact paths; the user must see the cases that are being confirmed.
@@ -114,7 +114,7 @@ Ask the user to confirm, delete, or add test-case directions. This is the mandat
 After confirmation, persist reusable business cases:
 
 ```bash
-ming-qa promote-cases --cases .qa-agent/current/test-cases.json --repo . --module <module-or-flow>
+python "$QA_AGENT_DIR/scripts/qa_agent.py"promote-cases --cases .qa-agent/current/test-cases.json --repo . --module <module-or-flow>
 ```
 
 ## Phase E: Test Split And Implementation

@@ -13,7 +13,7 @@
 
 1. **解析脚本头**：用 `Read` 工具读取脚本前 30 行，搜索 `PRE:` / `POST:` 行
 2. **执行 PRE**：对每条 `PRE:` 行，提取 MCP 工具名和 SQL，通过对应 MCP 工具执行。若 PRE 失败 → task 标记为 `blocked`，记录失败原因，不继续执行脚本
-3. **执行脚本**：`ming-qa run-with-env` 或 `bash` 运行脚本
+3. **执行脚本**：`python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env` 或 `bash` 运行脚本
 4. **执行 POST**：**无论脚本 pass/fail，都必须执行 POST 还原数据**。若 POST 失败 → 在 evidence 中记录"数据未还原"，标记为需人工介入
 5. **核实还原**：POST 后通过 MCP `read_query` 确认数据已恢复。MCP 不可用时通过后端 API 降级核实
 

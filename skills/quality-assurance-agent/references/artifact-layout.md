@@ -45,25 +45,25 @@ Rules:
 Initialize a project:
 
 ```powershell
-ming-qa init-project --repo .
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo .
 ```
 
 Then fill only `.qa-agent/local/.env` and validate:
 
 ```powershell
-ming-qa doctor --repo . --strict --check-services
+python "$QA_AGENT_DIR/scripts/qa_agent.py"doctor --repo . --strict --check-services
 ```
 
 Optional external setup remains explicit:
 
 ```powershell
-ming-qa init-project --repo . --install-playwright-agents --install-mysql-mcp --verify-mysql-mcp
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo . --install-playwright-agents --install-mysql-mcp --verify-mysql-mcp
 ```
 
 Persist confirmed cases after the only human gate:
 
 ```powershell
-ming-qa promote-cases --cases .qa-agent/current/test-cases.json --repo . --module <module-or-flow>
+python "$QA_AGENT_DIR/scripts/qa_agent.py"promote-cases --cases .qa-agent/current/test-cases.json --repo . --module <module-or-flow>
 ```
 
 ## Gitignore Policy

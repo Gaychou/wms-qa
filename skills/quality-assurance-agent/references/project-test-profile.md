@@ -50,7 +50,7 @@ Backend（后端）：
 - Full test command: `cd your-backend && mvn -q test -DskipITs`
 - Targeted command: `cd your-backend && mvn -q -Dtest=<ClassName> test`
 - Multi-class targeted command on PowerShell: `cd your-backend && mvn -q "-Dtest=<ClassA>,<ClassB>" test`
-- Surefire summary command: `ming-qa summarize-surefire --reports your-backend/target/surefire-reports`
+- Surefire summary command: `python "$QA_AGENT_DIR/scripts/qa_agent.py"summarize-surefire --reports your-backend/target/surefire-reports`
 - Environment dependencies observed in full tests: test profile may initialize Redis, RocketMQ, object storage, and Spring scheduled components. Record missing or unavailable services as environment issues.
 
 ## Reporting

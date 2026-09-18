@@ -24,7 +24,7 @@ E2E task 有三种可执行形态，按优先级选择：
 
 ## 环境变量传递（Windows 高频问题）
 
-不要在 bash 调用里手动 `source .env + env + sed`。直接用 `ming-qa run-with-env`，它内部处理 CRLF→LF、注释过滤、env 内联和日志记录。
+不要在 bash 调用里手动 `source .env + env + sed`。直接用 `python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env`，它内部处理 CRLF→LF、注释过滤、env 内联和日志记录。
 
 ## MySQL MCP 降级
 

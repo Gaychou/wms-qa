@@ -89,4 +89,6 @@ fi
 
 printf 'Install complete.\n'
 printf 'Skills installed to: %s\n' "$destination_root"
-printf 'Next: %s init-project --repo .\n' "$destination_root/quality-assurance-agent/bin/ming-qa"
+printf 'Next: open your agent and say\n'
+printf '      use quality-assurance-agent to run acceptance testing on <your module>\n'
+printf '      the skill runs the CLI itself -- no command to type by hand.\n'

@@ -23,9 +23,9 @@ Use this reference when a target repository contains `.mcp.json`, declares `mysq
 ## Commands
 
 ```powershell
-ming-qa install-mysql-mcp --repo . --verify
-ming-qa init-project --repo . --install-mysql-mcp --verify-mysql-mcp
-ming-qa doctor --repo . --strict --verify-mysql-mcp --json .qa-agent/current/environment-checks.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"install-mysql-mcp --repo . --verify
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo . --install-mysql-mcp --verify-mysql-mcp
+python "$QA_AGENT_DIR/scripts/qa_agent.py"doctor --repo . --strict --verify-mysql-mcp --json .qa-agent/current/environment-checks.json
 ```
 
 `init-project --install-mysql-mcp` 自动做两件事：从 `.env` 生成 `.mysql-mcp/credentials`，从 `.mcp.json` 生成 `.codex/config.toml`（供 Codex 使用）。前提是 `.env` 里有 `QA_MYSQL_*` 变量且 `.mcp.json` 里声明了 `mcpServers.mysql_mcp`。条件不足则静默跳过。

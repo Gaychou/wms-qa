@@ -10,8 +10,14 @@ description: >
 
 # Quality Assurance Agent — 顶层路由器
 
-> **CLI 调用约定**：本文档中的 `ming-qa <cmd>` 指执行本 skill 目录下的 `scripts/qa_agent.py`。
-> 解析优先级：`$QA_AGENT_CLI` → PATH 上的 `ming-qa` → 本 skill 目录内的 `scripts/qa_agent.py`。
+> **CLI 调用约定**：本工具包的 CLI 是 `quality-assurance-agent/scripts/qa_agent.py`。
+> 它**不以 PATH 命令的形式分发**——命令由你（agent）执行，人不必手敲。
+> 开工前解析一次 skill 目录，之后所有命令一律写成
+> `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+>
+>     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+>
+> 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 > 完整命令语法见 `references/cli-reference.md`。
 
 ## 你的定位

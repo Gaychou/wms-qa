@@ -9,13 +9,13 @@ The Agent must know existing cases and tests. If a matching case/test exists, ex
 ## Required Sequence
 
 ```bash
-ming-qa index-existing-cases --repo . --output .qa-agent/current/existing-case-index.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"index-existing-cases --repo . --output .qa-agent/current/existing-case-index.json
 ```
 
 Then generate candidate gaps as `.qa-agent/current/test-cases.generated.json` and merge:
 
 ```bash
-ming-qa merge-existing-cases --repo . --generated .qa-agent/current/test-cases.generated.json --existing-index .qa-agent/current/existing-case-index.json --output .qa-agent/current/test-cases.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"merge-existing-cases --repo . --generated .qa-agent/current/test-cases.generated.json --existing-index .qa-agent/current/existing-case-index.json --output .qa-agent/current/test-cases.json
 ```
 
 ## Reuse Sources

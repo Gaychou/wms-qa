@@ -47,49 +47,28 @@ npx skills add mingdui/ming-qa --agent claude-code --yes   -s quality-assurance-
 
 ## 快速上手
 
-```bash
-cd 你的项目
-
-# 初始化：生成 .qa-agent/ 目录、配置模板，并装好 Playwright E2E 环境
-ming-qa init-project --repo . --agent claude-code  # claude-code / codex / both
-
-# 填入密钥（已 git-ignored，绝不要提交）
-#   .qa-agent/local/.env
-
-# 环境体检
-ming-qa doctor --repo . --strict --check-services
-```
-
-> `ming-qa` 来自 skill 的 `bin/` 目录，**安装后不会自动进 PATH**。要么把它加进去，
-> 要么用完整路径调用：
->
-> ```bash
-> python .claude/skills/quality-assurance-agent/scripts/qa_agent.py init-project --repo . --agent claude-code
-> ```
->
-> Windows PowerShell 用 `python .claude\skills\...`（反斜杠）。
-
-然后在 Claude Code / Codex 里说：
+装完之后**不需要敲任何命令**。在 Claude Code / Codex 里说：
 
 ```
 使用 quality-assurance-agent，对 <你的模块> 进行验收
 ```
 
-用例生成后会停下等你确认。确认之后的所有阶段自动衔接，不需要人工介入。
+agent 会自动完成初始化、环境体检和工具链安装，只在需要你配合的三处停下：
 
-### 常用场景
+1. **填配置** —— 它会告诉你缺哪几项、各自去哪填（`.qa-agent/local/.env`，已 git-ignored）。
+   必填的只有测试账号；LLM Key 是可选的交叉审查增强，不填则该阶段跳过
+2. **确认用例** —— 用例生成后停下等你审核。这是全流程**唯一的人工门禁**
+3. 确认之后，脚本生成 → 执行修复 → 代码审查 → 报告，全部自动衔接
 
-已有模块增加新场景的用例（不重复确认旧用例）：
+### 想手动跑命令
 
+CLI 在 skill 的 `scripts/qa_agent.py`，**不作为 PATH 命令分发**。手动调用时先解析目录：
+
+```bash
+QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+python "$QA_AGENT_DIR/scripts/qa_agent.py" doctor --repo . --strict --check-services
 ```
-使用 quality-assurance-agent，对 <模块> 增加 <场景> 的用例
-```
 
-已验收过的模块直接回归（跳过用例设计，重跑已有脚本）：
-
-```
-使用 quality-assurance-agent，对 <模块> 做回归
-```
 
 ## 产物在哪
 

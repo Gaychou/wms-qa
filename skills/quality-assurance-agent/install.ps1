@@ -61,93 +61,12 @@ if (-not $DestinationRoot) {
   }
 }
 
-$Destination = Join-Path $DestinationRoot "quality-assurance-agent"
-$BinDir = Join-Path $Destination "bin"
-New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
+# 不再生成 bin/ 下的 ming-qa shim：脚本由 skill 通过 ${CLAUDE_SKILL_DIR} 等方式定位，
+# 命令由 agent 执行，人不需要在 PATH 上放一个 ming-qa。
 
-$Ps1Shim = Join-Path $BinDir "ming-qa.ps1"
-$Ps1Content = @"
-param(
-  [Parameter(ValueFromRemainingArguments = `$true)]
-  [string[]]`$RemainingArgs
-)
-
-`$SkillRoot = Split-Path -Parent (Split-Path -Parent `$MyInvocation.MyCommand.Path)
-`$Script = Join-Path `$SkillRoot "scripts\qa_agent.py"
-`$Python = Get-Command python -ErrorAction SilentlyContinue
-if (`$Python) {
-  & python `$Script @RemainingArgs
-  exit `$LASTEXITCODE
-}
-
-`$Py = Get-Command py -ErrorAction SilentlyContinue
-if (`$Py) {
-  & py -3 `$Script @RemainingArgs
-  exit `$LASTEXITCODE
-}
-
-throw "python/py not found in PATH."
-"@
-Set-Content -LiteralPath $Ps1Shim -Value $Ps1Content -Encoding UTF8
-
-$CmdShim = Join-Path $BinDir "ming-qa.cmd"
-$CmdContent = @"
-@echo off
-setlocal enabledelayedexpansion
-set "SCRIPT_DIR=%~dp0"
-set "SKILL_ROOT=%SCRIPT_DIR%.."
-set "SCRIPT=%SKILL_ROOT%\scripts\qa_agent.py"
-
-where python >nul 2>nul
-if not errorlevel 1 (
-  python "%SCRIPT%" %*
-  exit /b %errorlevel%
-)
-
-where python3 >nul 2>nul
-if not errorlevel 1 (
-  python3 "%SCRIPT%" %*
-  exit /b %errorlevel%
-)
-
-where py >nul 2>nul
-if not errorlevel 1 (
-  py -3 "%SCRIPT%" %*
-  exit /b %errorlevel%
-)
-
-echo python3/python/py not found in PATH. 1>&2
-exit /b 1
-"@
-Set-Content -LiteralPath $CmdShim -Value $CmdContent -Encoding ASCII
-
-# 无扩展名的 sh 版 shim，供 Git Bash / MSYS / WSL 直接调用 `ming-qa`
-$ShShim = Join-Path $BinDir "ming-qa"
-$ShContent = @"
-#!/usr/bin/env sh
-set -eu
-script_dir=`$(CDPATH='' cd -- "`$(dirname -- "`$0")/.." && pwd)
-if [ -n "`${PYTHON:-}" ]; then
-  python_bin="`$PYTHON"
-elif command -v python3 >/dev/null 2>&1; then
-  python_bin=python3
-elif command -v python >/dev/null 2>&1; then
-  python_bin=python
-else
-  echo "python3/python not found in PATH" >&2
-  exit 1
-fi
-exec "`$python_bin" "`$script_dir/scripts/qa_agent.py" "`$@"
-"@
-# 用 LF 行尾 + 无 BOM 写入，避免 sh 因 CRLF/BOM 解析失败
-$ShContentLf = $ShContent -replace "`r`n", "`n"
-$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($ShShim, $ShContentLf, $Utf8NoBom)
-
-Write-Output "Created shims: $Ps1Shim, $CmdShim, $ShShim"
-
-# 本脚本只把 skill 文件复制到目标 skills 目录，并生成局部 shim。
-# 它不会修改你的用户 PATH；想让终端直接敲 ming-qa，把生成的 bin 目录自行加进 PATH。
+# 本脚本只把 skill 文件复制到目标 skills 目录，不修改用户 PATH。
 Write-Output "Install complete."
 Write-Output "Skills installed to: $DestinationRoot"
-Write-Output "Next: $Destination\bin\ming-qa.ps1 init-project --repo ."
+Write-Output "Next: open your agent and say"
+Write-Output "      use quality-assurance-agent to run acceptance testing on <your module>"
+Write-Output "      the skill runs the CLI itself -- no command to type by hand."

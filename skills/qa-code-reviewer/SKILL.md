@@ -9,8 +9,14 @@ description: >
 
 # QA Code Reviewer — 独立审查
 
-> **CLI 调用约定**：本文档中的 `ming-qa <cmd>` 指执行 `quality-assurance-agent` skill 目录下的 `scripts/qa_agent.py`。
-> 解析优先级：`$QA_AGENT_CLI` → PATH 上的 `ming-qa` → `quality-assurance-agent/scripts/qa_agent.py`。
+> **CLI 调用约定**：本工具包的 CLI 是 `quality-assurance-agent/scripts/qa_agent.py`。
+> 它**不以 PATH 命令的形式分发**——命令由你（agent）执行，人不必手敲。
+> 开工前解析一次 skill 目录，之后所有命令一律写成
+> `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+>
+>     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+>
+> 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 > 完整命令语法见 `quality-assurance-agent/references/cli-reference.md`。
 
 ## 你的定位
@@ -22,7 +28,7 @@ description: >
 ## CLI 命令
 
 ```powershell
-ming-qa assert-code-review --code-review .qa-agent/current/code-review.json --output .qa-agent/current/code-review-check.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-code-review --code-review .qa-agent/current/code-review.json --output .qa-agent/current/code-review-check.json
 ```
 
 ## 输入（越多越好，但 code 本身是核心）
@@ -34,7 +40,7 @@ ming-qa assert-code-review --code-review .qa-agent/current/code-review.json --ou
 - `.qa-agent/reports/latest-report.html`——运行证据的聚合视图
 - **最重要的：目标代码文件本身**——用 Read 工具完整阅读 scope 内的 Controller、Service、Mapper、前端页面
 
-以上路径可通过 `ming-qa manifest --repo .` 快速确认。
+以上路径可通过 `python "$QA_AGENT_DIR/scripts/qa_agent.py"manifest --repo .` 快速确认。
 
 ## 审查关注点
 
@@ -111,7 +117,7 @@ ming-qa assert-code-review --code-review .qa-agent/current/code-review.json --ou
 然后跑门禁：
 
 ```bash
-ming-qa assert-code-review --code-review .qa-agent/current/code-review.json --output .qa-agent/current/code-review-check.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-code-review --code-review .qa-agent/current/code-review.json --output .qa-agent/current/code-review-check.json
 ```
 
 ## 容错与降级

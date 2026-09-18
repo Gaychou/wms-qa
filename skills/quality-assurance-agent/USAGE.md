@@ -36,8 +36,8 @@ bash install.sh --add-user-path
 安装后直接这样用：
 
 ```bash
-ming-qa init-project --repo .
-ming-qa doctor --repo . --strict --check-services
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo .
+python "$QA_AGENT_DIR/scripts/qa_agent.py"doctor --repo . --strict --check-services
 ```
 
 如果你正在技能源码目录里直接调试，也可以用：
@@ -53,7 +53,7 @@ Windows 下 `install.ps1` 会同时准备可执行 launcher；macOS / Linux 下 
 先在目标仓库根目录执行初始化：
 
 ```bash
-ming-qa init-project --repo .
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo .
 ```
 
 这一步会生成 `.qa-agent/` 目录结构、配置文件模板，并默认装好 E2E 环境（Playwright Test Agents 定义 + `@playwright/test` + `playwright.config` + 浏览器二进制）。生成并整理：
@@ -77,7 +77,7 @@ ming-qa init-project --repo .
 接着做严格环境预检：
 
 ```bash
-ming-qa doctor --repo . --strict --check-services
+python "$QA_AGENT_DIR/scripts/qa_agent.py"doctor --repo . --strict --check-services
 ```
 
 `doctor` 会检查：
@@ -90,7 +90,7 @@ ming-qa doctor --repo . --strict --check-services
 如需初始化后立即验证数据库连通性，可加 `--verify-mysql-mcp`：
 
 ```bash
-ming-qa init-project --repo . --verify-mysql-mcp
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo . --verify-mysql-mcp
 ```
 
 ## 3. 用户只需要记住的 3 条
@@ -100,14 +100,14 @@ ming-qa init-project --repo . --verify-mysql-mcp
 新项目先执行：
 
 ```bash
-ming-qa init-project --repo .
-ming-qa doctor --repo . --strict --check-services
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo .
+python "$QA_AGENT_DIR/scripts/qa_agent.py"doctor --repo . --strict --check-services
 ```
 
 如需初始化后立即验证数据库连通性，可加 `--verify-mysql-mcp`：
 
 ```bash
-ming-qa init-project --repo . --verify-mysql-mcp
+python "$QA_AGENT_DIR/scripts/qa_agent.py"init-project --repo . --verify-mysql-mcp
 ```
 
 ### 2) 执行 QA
@@ -176,7 +176,7 @@ ming-qa init-project --repo . --verify-mysql-mcp
 ### 只跑某个门禁
 
 ```bash
-ming-qa run-commands --repo . --config .qa-agent/config/qa-agent.config.yaml --gate e2e
+python "$QA_AGENT_DIR/scripts/qa_agent.py"run-commands --repo . --config .qa-agent/config/qa-agent.config.yaml --gate e2e
 ```
 
 可用 gate：
@@ -194,7 +194,7 @@ ming-qa run-commands --repo . --config .qa-agent/config/qa-agent.config.yaml --g
 ### 只跑 E2E
 
 ```bash
-ming-qa run-loop --repo . --config .qa-agent/config/qa-agent.config.yaml --gates e2e --output .qa-agent/runs/latest-run.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"run-loop --repo . --config .qa-agent/config/qa-agent.config.yaml --gates e2e --output .qa-agent/runs/latest-run.json
 ```
 
 ## 7. 新增工具命令
@@ -204,9 +204,9 @@ ming-qa run-loop --repo . --config .qa-agent/config/qa-agent.config.yaml --gates
 替代手动 `env $(sed...) bash` 的繁琐流程，自动加载 `.qa-agent/local/.env`、处理 CRLF 换行、传递变量到子进程、记录执行日志：
 
 ```bash
-ming-qa run-with-env --repo . --script tests/api/order/tc-p0-001-create-single.sh
-ming-qa run-with-env --repo . --script tests/api/order/tc-p0-001-create-single.sh --extra "TARGET_BOX_ID=5"
-ming-qa run-with-env --repo . --script tests/api/order/tc-p0-001.sh --dry-run   # 仅打印命令不执行
+python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env --repo . --script tests/api/order/tc-p0-001-create-single.sh
+python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env --repo . --script tests/api/order/tc-p0-001-create-single.sh --extra "TARGET_BOX_ID=5"
+python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env --repo . --script tests/api/order/tc-p0-001.sh --dry-run   # 仅打印命令不执行
 ```
 
 日志自动写入 `.qa-agent/runs/run-<script-name>-<timestamp>.log`。
@@ -230,7 +230,7 @@ repair:
 各阶段命令执行后自动更新 `.qa-agent/current/manifest.json`，下游 skill 可直接读取上游产物路径和阶段状态，消除自然语言 args 手工传递的信息衰减：
 
 ```bash
-ming-qa manifest --repo .   # 查看当前 manifest（产物路径、阶段状态）
+python "$QA_AGENT_DIR/scripts/qa_agent.py"manifest --repo .   # 查看当前 manifest（产物路径、阶段状态）
 ```
 
 manifest.json 结构：
@@ -268,7 +268,7 @@ manifest 现在覆盖用例确认（`promote-cases`）、执行循环（`run-loo
 规避 AI Write/Edit 工具在 Windows 上的中文编码损坏（U+FFFD）风险：
 
 ```bash
-python3 -c "import json,sys; sys.stdout.write(json.dumps(data, ensure_ascii=False))" | ming-qa safe-write-json .qa-agent/current/output.json --from-stdin
+python3 -c "import json,sys; sys.stdout.write(json.dumps(data, ensure_ascii=False))" | python "$QA_AGENT_DIR/scripts/qa_agent.py"safe-write-json .qa-agent/current/output.json --from-stdin
 ```
 
 ## 8. 常见故障与解决方案
@@ -279,7 +279,7 @@ python3 -c "import json,sys; sys.stdout.write(json.dumps(data, ensure_ascii=Fals
 
 **根因**：AI 的 Write/Edit 工具在 Windows 上处理多字节中文时偶发部分字节损坏，被替换为 U+FFFD。
 
-**规避方案（推荐）**：不通过 AI Write/Edit 工具直接写中文 JSON 文件内容，改用 `ming-qa safe-write-json`，通过 Python 管道传递 JSON 内容：
+**规避方案（推荐）**：不通过 AI Write/Edit 工具直接写中文 JSON 文件内容，改用 `python "$QA_AGENT_DIR/scripts/qa_agent.py"safe-write-json`，通过 Python 管道传递 JSON 内容：
 
 ```powershell
 # ❌ 避免：让 AI 用 Write 工具直接写大段中文 JSON
@@ -289,7 +289,7 @@ import json, sys
 #  在此构造 JSON 数据
 data = {'test': '中文测试', 'ok': True}
 sys.stdout.write(json.dumps(data, ensure_ascii=False, indent=2))
-“ | ming-qa safe-write-json .qa-agent/current/your-file.json --from-stdin
+“ | python "$QA_AGENT_DIR/scripts/qa_agent.py"safe-write-json .qa-agent/current/your-file.json --from-stdin
 ```
 
 `safe-write-json` 会在写文件后立即做 JSON 合法性校验 + U+FFFD 扫描，确保写入内容无编码损坏。优先使用 `--from-stdin`（管道输入），备选 `--json-string`。
@@ -297,7 +297,7 @@ sys.stdout.write(json.dumps(data, ensure_ascii=False, indent=2))
 **验证命令**：
 
 ```powershell
-ming-qa check-mojibake .qa-agent/current/*.json --strict
+python "$QA_AGENT_DIR/scripts/qa_agent.py"check-mojibake .qa-agent/current/*.json --strict
 ```
 
 ### Maven 在 Git Bash 下 classpath argfile 写入 C:\Windows 失败
@@ -319,7 +319,7 @@ Start-Process -FilePath “mvn.cmd” -ArgumentList “spring-boot:run” -Redir
 **解决**：使用 `--acceptance-mode`：
 
 ```powershell
-ming-qa generate-spec-tasks --cases .qa-agent/current/test-cases.json --repo . --output .qa-agent/current/test-spec-tasks.json --acceptance-mode
+python "$QA_AGENT_DIR/scripts/qa_agent.py"generate-spec-tasks --cases .qa-agent/current/test-cases.json --repo . --output .qa-agent/current/test-spec-tasks.json --acceptance-mode
 ```
 
 等价于 `--min-specs-by-priority P0=1,P1=1,P2=1,P3=1 --ratio unit=0,integration=0,api=1,e2e=0`。

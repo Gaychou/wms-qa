@@ -8,8 +8,14 @@ description: >
 
 # QA Test Runner — 执行与修复
 
-> **CLI 调用约定**：本文档中的 `ming-qa <cmd>` 指执行 `quality-assurance-agent` skill 目录下的 `scripts/qa_agent.py`。
-> 解析优先级：`$QA_AGENT_CLI` → PATH 上的 `ming-qa` → `quality-assurance-agent/scripts/qa_agent.py`。
+> **CLI 调用约定**：本工具包的 CLI 是 `quality-assurance-agent/scripts/qa_agent.py`。
+> 它**不以 PATH 命令的形式分发**——命令由你（agent）执行，人不必手敲。
+> 开工前解析一次 skill 目录，之后所有命令一律写成
+> `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+>
+>     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+>
+> 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 > 完整命令语法见 `quality-assurance-agent/references/cli-reference.md`。
 
 ## 你的定位
@@ -22,7 +28,7 @@ description: >
 
 本阶段所有命令的完整语法、参数说明见**主 skill（quality-assurance-agent）→ CLI 命令参考 → 阶段 4**。这里不重复维护命令语法。
 
-测试脚本执行推荐用 `ming-qa run-with-env`（自动处理 CRLF/环境变量/日志），详细用法见主 skill CLI 命令参考的「通用工具」章节。
+测试脚本执行推荐用 `python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env`（自动处理 CRLF/环境变量/日志），详细用法见主 skill CLI 命令参考的「通用工具」章节。
 
 ## 前置条件
 
@@ -44,7 +50,7 @@ description: >
 
 ### 2. 执行方式
 
-- api 层 bash 脚本：`ming-qa run-with-env --repo . --script <script-path> --extra KEY=VAL...`
+- api 层 bash 脚本：`python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env --repo . --script <script-path> --extra KEY=VAL...`
 - 需要数据库验证的 integration 层：先读取 `.claude/skills/quality-assurance-agent/references/mysql-mcp-integration.md` 了解查库方法，跑脚本后**按 `oracle.db` 结构化逐条校验**，记录「查询摘要 + 期望 + 实际 + 状态」到 evidence
 - `verificationMode: direct-db` 的数据完整性 task：直接通过 MySQL MCP `read_query` 执行 `oracle.db[].query`，逐条断言，不允许降级为「手工核对通过」
 - e2e 层：先读取 `.claude/skills/quality-assurance-agent/references/playwright-agent-integration.md` 了解 Playwright 规划器/生成器/修复器流程，通过 Playwright MCP 真实浏览器操作（navigate → login → click → snapshot → network_requests）
@@ -106,7 +112,7 @@ description: >
 读取 `.claude/skills/quality-assurance-agent/references/spec-task-planning.md` 复习 completion gate 的判定规则。
 
 ```bash
-ming-qa assert-completion --cases .qa-agent/current/test-cases.json \
+python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-completion --cases .qa-agent/current/test-cases.json \
   --spec-tasks .qa-agent/current/test-spec-tasks.json \
   --priorities P0,P1,P2 --min-specs-by-priority P0=1,P1=1,P2=1 \
   --output .qa-agent/current/completion-check.json
@@ -121,7 +127,7 @@ completion-check passed 后，把 completion-check.json 连同执行证据移交
 本轮执行中发现的新知识，追加到项目经验库——下一轮 QA 不需要重新踩坑：
 
 ```bash
-ming-qa save-knowledge --repo . --module <module> --category <category> --summary "<一句话>" --detail "<详细说明>" --tags "<逗号分隔>"
+python "$QA_AGENT_DIR/scripts/qa_agent.py"save-knowledge --repo . --module <module> --category <category> --summary "<一句话>" --detail "<详细说明>" --tags "<逗号分隔>"
 ```
 
 **应该记录的**：

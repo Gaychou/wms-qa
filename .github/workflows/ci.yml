@@ -65,9 +65,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: |
-          shellcheck skills/quality-assurance-agent/install.sh
-          shellcheck skills/quality-assurance-agent/bin/ming-qa
+        run: shellcheck skills/quality-assurance-agent/install.sh
 
   manifests:
     name: Validate plugin manifests

@@ -1657,21 +1657,6 @@ def resolve_home_dir() -> Path:
         raise
 
 
-def cli_invocation() -> str:
-    """返回**用户可以直接复制执行**的 CLI 调用前缀。
-
-    文档与工具输出里一律写 `ming-qa <cmd>`，但那要求 skill 的 bin/ 已经在 PATH 上。
-    用 npx skills 或插件市场安装的用户并没有做过这一步——照抄只会得到
-    `ming-qa: command not found`，而这恰恰是他们安装完之后敲的第一条命令。
-
-    所以这里实际探测一次：PATH 上有 ming-qa 就沿用，没有就回退成本脚本的真实路径。
-    输出给用户的命令必须是能直接跑通的那一种。
-    """
-    if os.environ.get("QA_AGENT_CLI") or shutil.which("ming-qa"):
-        return "ming-qa"
-    return f'python "{Path(__file__).resolve()}"'
-
-
 def codex_config_path() -> Path:
     codex_home = os.environ.get("CODEX_HOME")
     return (Path(codex_home) if codex_home else resolve_home_dir() / ".codex") / "config.toml"
@@ -5648,10 +5633,11 @@ def init_project(args: argparse.Namespace) -> None:
             **({"verify": mysql["verify"]} if mysql.get("verify") else {}),
         },
         "nextActions": [
-            "填写 config/env.shared 中的测试账号（QA_USER_USERNAME/QA_USER_PASSWORD）和服务地址（QA_WEB_BASE_URL/QA_API_BASE_URL）。",
-            "填写 local/.env 中的 LLM API Key（QA_AGENT_LLM_API_KEY）。",
-            f"运行 {cli_invocation()} doctor --repo . --strict --check-services --auto-start --config-mysql-mcp。",
-            "打开 Claude Code 或 Codex Agent，输入：使用 quality-assurance-agent，验收当前改动（或 验收浏览购买商品流程）。",
+            "回到 Claude Code / Codex，说：使用 quality-assurance-agent，验收当前改动 —— "
+            "之后由 agent 驱动：它会跑 doctor、按 scope 判定必需工具链，并在需要你配合时停下。",
+            "它停下来时通常只要你做一件事：补齐 .qa-agent 下的配置。"
+            "必填的是测试账号（config/env.shared 的 QA_USER_USERNAME/QA_USER_PASSWORD）"
+            "和服务地址；LLM API Key 在 local/.env，是可选增强，不填则跳过交叉审查阶段。",
         ],
     }
     if getattr(args, "json", None):
@@ -6492,7 +6478,7 @@ def doctor(args: argparse.Namespace) -> None:
                 runtime_ok,
                 "runtime ready (pkg+installed+config)" if runtime_ok else "missing: " + "; ".join(missing),
                 required=False,
-                next_action="" if runtime_ok else f"{cli_invocation()} install-playwright-runtime --repo .",
+                next_action="" if runtime_ok else "缺 Playwright 运行时；让 agent 执行 install-playwright-runtime（它会按 scope 判定是否需要）",
             )
             add(
                 "playwright_browsers",
@@ -6668,7 +6654,10 @@ def doctor(args: argparse.Namespace) -> None:
         api_key_present,
         "present" if api_key_present else "missing",
         category="secrets",
-        next_action="在 .qa-agent/local/.env 中配置 QA_AGENT_LLM_API_KEY" if not api_key_present else "",
+        # required=False：README 写明了「多模型交叉审查是可选增强，未配置时该阶段跳过」。
+        # 之前按必须项拦截，是在拿选做当必做卡人。
+        required=False,
+        next_action="在 .qa-agent/local/.env 中配置 QA_AGENT_LLM_API_KEY（可选，不配则跳过交叉审查阶段）" if not api_key_present else "",
     )
     base_url = qa_env_value(repo, DEFAULT_BASE_URL_ENV) if repo.exists() else os.environ.get(DEFAULT_BASE_URL_ENV)
     add(DEFAULT_BASE_URL_ENV, True, "configured" if base_url else "not set（No built-in default; set it to enable multi-model review）", category="secrets")
@@ -6678,10 +6667,22 @@ def doctor(args: argparse.Namespace) -> None:
         mark = "OK" if check["ok"] else ("FAIL" if check.get("required", True) else "WARN")
         suffix = f"；处理建议={check['nextAction']}" if check.get("nextAction") else ""
         print(f"[{mark}] {check['name']}: {check['detail']}{suffix}")
-    blocking_failed = [check for check in failed if check.get("required", True)]
+    # 显式豁免：--ignore <check 名>（可重复）。被豁免的项仍然执行、仍然出现在输出里，
+    # 只是不计入阻塞——用于「我知道它是这个状态，仍要继续」的场景。
+    # 豁免必须可见可追溯，不能变成静默跳过。
+    ignored = {str(x).strip() for x in (getattr(args, "ignore", None) or []) if str(x).strip()}
+    blocking_failed = [
+        check for check in failed
+        if check.get("required", True) and check["name"] not in ignored
+    ]
+    waived = [check for check in failed if check.get("required", True) and check["name"] in ignored]
     if blocking_failed:
         print(f"\n必须修复项（{len(blocking_failed)}）：")
         for check in blocking_failed[:30]:
+            print(f"- {check['name']}: {check.get('nextAction') or check['detail']}")
+    if waived:
+        print(f"\n已豁免项（{len(waived)}）—— 问题依旧存在，按 --ignore 要求不计入阻塞：")
+        for check in waived[:10]:
             print(f"- {check['name']}: {check.get('nextAction') or check['detail']}")
     optional_failed = [check for check in failed if not check.get("required", True)]
     if optional_failed:
@@ -10265,6 +10266,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--repo", default=".")
     p.add_argument("--json")
     p.add_argument("--strict", action="store_true")
+    p.add_argument("--ignore", action="append", default=[], metavar="CHECK",
+                   help="显式豁免某个必须项（可重复），例如 --ignore service:web:reachable。"
+                        "被豁免的项仍会执行并出现在输出里，只是不再阻塞退出码——"
+                        "用于「我知道它现在不可达，仍要继续」的场景。")
     p.add_argument("--agent", default=AGENT_CLAUDE, type=normalize_agent_name, choices=list(AGENT_CHOICES),
                    help="Agent 类型：claude-code / codex / both。兼容旧名 claude")
     p.add_argument("--check-services", action="store_true", help="探测 .qa-agent/local/.env 中配置的服务 URL 可达性")

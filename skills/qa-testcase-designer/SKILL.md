@@ -9,8 +9,14 @@ description: >
 
 # QA Testcase Designer — 用例设计与确认
 
-> **CLI 调用约定**：本文档中的 `ming-qa <cmd>` 指执行 `quality-assurance-agent` skill 目录下的 `scripts/qa_agent.py`。
-> 解析优先级：`$QA_AGENT_CLI` → PATH 上的 `ming-qa` → `quality-assurance-agent/scripts/qa_agent.py`。
+> **CLI 调用约定**：本工具包的 CLI 是 `quality-assurance-agent/scripts/qa_agent.py`。
+> 它**不以 PATH 命令的形式分发**——命令由你（agent）执行，人不必手敲。
+> 开工前解析一次 skill 目录，之后所有命令一律写成
+> `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+>
+>     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+>
+> 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 > 完整命令语法见 `quality-assurance-agent/references/cli-reference.md`。
 
 ## 你的定位
@@ -61,9 +67,9 @@ description: >
 读 `.qa-agent/knowledge/` 下与本次 scope 相关的经验，指导用例设计：
 
 ```bash
-ming-qa show-knowledge --repo . --module <module> --category data-prep
-ming-qa show-knowledge --repo . --module <module> --category api-quirk
-ming-qa show-knowledge --repo . --module <module> --category test-pattern
+python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module <module> --category data-prep
+python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module <module> --category api-quirk
+python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module <module> --category test-pattern
 ```
 
 - `data-prep` 经验指导你设计用例的前置数据准备（怎么构造余额不足、已过期资产等）
@@ -93,7 +99,7 @@ ming-qa show-knowledge --repo . --module <module> --category test-pattern
 
 ### 6. 编码检查
 
-运行 `check-mojibake` 对所有产物做编码完整性扫描。Windows 下 AI Write/Edit 工具写中文 JSON 偶发 U+FFFD 替换字符——如果检出问题，用 `ming-qa safe-write-json --from-stdin` 通过 Python 管道重写受损文件。
+运行 `check-mojibake` 对所有产物做编码完整性扫描。Windows 下 AI Write/Edit 工具写中文 JSON 偶发 U+FFFD 替换字符——如果检出问题，用 `python "$QA_AGENT_DIR/scripts/qa_agent.py"safe-write-json --from-stdin` 通过 Python 管道重写受损文件。
 
 ### 7. 用户确认——这是硬门禁
 
@@ -122,7 +128,7 @@ ming-qa show-knowledge --repo . --module <module> --category test-pattern
 
 - `test-cases.json`、`test-cases.html`、`model-review.json` 全部要通过 `check-mojibake --strict`
 - 如果你用 AI 的 Write 工具直接写 `test-cases.json` 内容，写完后必须立即做 U+FFFD 检查
-- 多次出现编码损坏时改用 `ming-qa safe-write-json --from-stdin`（通过 Python 管道写入）
+- 多次出现编码损坏时改用 `python "$QA_AGENT_DIR/scripts/qa_agent.py"safe-write-json --from-stdin`（通过 Python 管道写入）
 
 ## 容错与降级
 

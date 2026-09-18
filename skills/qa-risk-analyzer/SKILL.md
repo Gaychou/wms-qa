@@ -9,8 +9,14 @@ description: >
 
 # QA Risk Analyzer — 风险分析
 
-> **CLI 调用约定**：本文档中的 `ming-qa <cmd>` 指执行 `quality-assurance-agent` skill 目录下的 `scripts/qa_agent.py`。
-> 解析优先级：`$QA_AGENT_CLI` → PATH 上的 `ming-qa` → `quality-assurance-agent/scripts/qa_agent.py`。
+> **CLI 调用约定**：本工具包的 CLI 是 `quality-assurance-agent/scripts/qa_agent.py`。
+> 它**不以 PATH 命令的形式分发**——命令由你（agent）执行，人不必手敲。
+> 开工前解析一次 skill 目录，之后所有命令一律写成
+> `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+>
+>     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+>
+> 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 > 完整命令语法见 `quality-assurance-agent/references/cli-reference.md`。
 
 ## 你的定位
@@ -43,7 +49,7 @@ description: >
 读 `.qa-agent/knowledge/` 下的 `bug-pattern` 类经验，了解本项目历史上出过什么 bug、根因、修法：
 
 ```bash
-ming-qa show-knowledge --repo . --module <module> --category bug-pattern
+python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module <module> --category bug-pattern
 ```
 
 读代码时把这些历史缺陷模式当作**优先验证点**——历史上"并发扣款没加锁"出过 bug，这次扫到资金代码就重点查行锁。历史缺陷不是风险定论，而是把"盲扫"变成"带着怀疑查"。

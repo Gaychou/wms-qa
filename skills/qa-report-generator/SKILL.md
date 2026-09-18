@@ -8,8 +8,14 @@ description: >
 
 # QA Report Generator — 报告生成与最终判定
 
-> **CLI 调用约定**：本文档中的 `ming-qa <cmd>` 指执行 `quality-assurance-agent` skill 目录下的 `scripts/qa_agent.py`。
-> 解析优先级：`$QA_AGENT_CLI` → PATH 上的 `ming-qa` → `quality-assurance-agent/scripts/qa_agent.py`。
+> **CLI 调用约定**：本工具包的 CLI 是 `quality-assurance-agent/scripts/qa_agent.py`。
+> 它**不以 PATH 命令的形式分发**——命令由你（agent）执行，人不必手敲。
+> 开工前解析一次 skill 目录，之后所有命令一律写成
+> `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+>
+>     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+>
+> 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 > 完整命令语法见 `quality-assurance-agent/references/cli-reference.md`。
 
 ## 你的定位
@@ -34,7 +40,7 @@ description: >
 ### 1. 汇总执行日志
 
 ```bash
-ming-qa aggregate-runs --repo . --output .qa-agent/current/latest-run.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"aggregate-runs --repo . --output .qa-agent/current/latest-run.json
 ```
 
 `aggregate-runs` 优先读 `runs/run-*.meta.json` sidecar（聚合唯一事实源），缺失时回退文件名/头解析。
@@ -42,7 +48,7 @@ ming-qa aggregate-runs --repo . --output .qa-agent/current/latest-run.json
 ### 2. 跑证据完整性门禁
 
 ```bash
-ming-qa assert-evidence-integrity \
+python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-evidence-integrity \
   --cases .qa-agent/current/test-cases.json \
   --spec-tasks .qa-agent/current/test-spec-tasks.json \
   --run .qa-agent/current/latest-run.json \
@@ -55,7 +61,7 @@ ming-qa assert-evidence-integrity \
 ### 3. 跑就绪门禁
 
 ```bash
-ming-qa assert-readiness \
+python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-readiness \
   --completion-check .qa-agent/current/completion-check.json \
   --code-review .qa-agent/current/code-review.json \
   --evidence-integrity-check .qa-agent/current/evidence-integrity-check.json \
@@ -80,7 +86,7 @@ ming-qa assert-readiness \
 ### 4.5 跑 QA 自检（强制，报告内容自洽性）
 
 ```bash
-ming-qa qa-self-check \
+python "$QA_AGENT_DIR/scripts/qa_agent.py"qa-self-check \
   --report .qa-agent/reports/latest-report.html \
   --current .qa-agent/current \
   --output .qa-agent/current/self-check.json

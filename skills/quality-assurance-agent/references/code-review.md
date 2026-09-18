@@ -60,7 +60,7 @@ Code review passes only when no unresolved P0/P1 findings remain. P2/P3 can rema
 After writing `.qa-agent/current/code-review.json`, run:
 
 ```bash
-ming-qa assert-code-review --code-review .qa-agent/current/code-review.json --output .qa-agent/current/code-review-check.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-code-review --code-review .qa-agent/current/code-review.json --output .qa-agent/current/code-review-check.json
 ```
 
 The final QA summary must use `assert-readiness`; Code review findings cannot override missing completion evidence.

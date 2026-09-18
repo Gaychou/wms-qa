@@ -9,8 +9,14 @@ description: >
 
 # QA Context Profiler — 上下文收集
 
-> **CLI 调用约定**：本文档中的 `ming-qa <cmd>` 指执行 `quality-assurance-agent` skill 目录下的 `scripts/qa_agent.py`。
-> 解析优先级：`$QA_AGENT_CLI` → PATH 上的 `ming-qa` → `quality-assurance-agent/scripts/qa_agent.py`。
+> **CLI 调用约定**：本工具包的 CLI 是 `quality-assurance-agent/scripts/qa_agent.py`。
+> 它**不以 PATH 命令的形式分发**——命令由你（agent）执行，人不必手敲。
+> 开工前解析一次 skill 目录，之后所有命令一律写成
+> `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+>
+>     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+>
+> 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
 > 完整命令语法见 `quality-assurance-agent/references/cli-reference.md`。
 
 ## 你的定位
@@ -40,10 +46,10 @@ description: >
 
 ```bash
 # 业务模块经验（api-quirk、环境特性、测试数据技巧）
-ming-qa show-knowledge --repo . --module <module-name>
+python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module <module-name>
 
 # QA Agent 自身经验（已知缺陷、workaround）
-ming-qa show-knowledge --repo . --module agent
+python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module agent
 ```
 
 业务经验指导你设计用例和脚本，Agent 经验告诉你"这次别踩哪些 QA 工具本身的坑"——两条线独立，互不干扰。
@@ -96,8 +102,8 @@ ming-qa show-knowledge --repo . --module agent
 ## 编码安全
 
 - 本阶段如果产生中文 JSON 文件（context.json 等），注意 Windows 下 AI Write/Edit 工具偶发 U+FFFD 编码损坏。
-- 如果发现文件写完后检查出替换字符，用 `ming-qa safe-write-json --from-stdin` 通过 Python 管道重写文件内容。
-- 写完文件后务必跑 `ming-qa check-mojibake` 验证编码完整性。
+- 如果发现文件写完后检查出替换字符，用 `python "$QA_AGENT_DIR/scripts/qa_agent.py"safe-write-json --from-stdin` 通过 Python 管道重写文件内容。
+- 写完文件后务必跑 `python "$QA_AGENT_DIR/scripts/qa_agent.py"check-mojibake` 验证编码完整性。
 
 ## 容错与降级
 

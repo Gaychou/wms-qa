@@ -56,12 +56,15 @@
 
 `skills/quality-assurance-agent/scripts/qa_agent.py` 是命令语法的唯一真相来源。
 
-各 `SKILL.md` 中出现的 `ming-qa <cmd>`，指的是**该 skill 目录下的 CLI 脚本**，
-按以下优先级解析：
+它**不作为 PATH 上的命令分发**——命令由 agent 执行，人不需要手敲。
+先解析一次 skill 目录，之后所有命令写成 `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
 
-1. `$QA_AGENT_CLI` 环境变量 —— 若设置了，直接用它指的路径
-2. PATH 上的 `ming-qa` —— 适用于把 skill 的 `bin/` 目录加入 PATH 的用户
-3. 本 skill 目录内的 `scripts/qa_agent.py` —— 前两者都没有时的兜底
+```bash
+QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+```
+
+运行环境若已告知 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
+`$QA_AGENT_CLI` 优先级最高，供团队显式指定路径。
 
 这个约定让同一套文档在三种安装形态下都成立（`npx skills` 安装、
 插件市场安装、源码安装脚本），不需要为每种安装方式维护一套命令行写法。

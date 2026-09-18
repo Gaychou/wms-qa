@@ -9,9 +9,9 @@ Business cases are for user confirmation. Spec tasks are for strict implementati
 ## Commands
 
 ```bash
-ming-qa generate-spec-tasks --cases .qa-agent/current/test-cases.json --repo . --output .qa-agent/current/test-spec-tasks.json
-ming-qa coverage-balance --spec-tasks .qa-agent/current/test-spec-tasks.json --output .qa-agent/current/coverage-balance.json --strict
-ming-qa assert-completion --cases .qa-agent/current/test-cases.json --spec-tasks .qa-agent/current/test-spec-tasks.json --output .qa-agent/current/completion-check.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"generate-spec-tasks --cases .qa-agent/current/test-cases.json --repo . --output .qa-agent/current/test-spec-tasks.json
+python "$QA_AGENT_DIR/scripts/qa_agent.py"coverage-balance --spec-tasks .qa-agent/current/test-spec-tasks.json --output .qa-agent/current/coverage-balance.json --strict
+python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-completion --cases .qa-agent/current/test-cases.json --spec-tasks .qa-agent/current/test-spec-tasks.json --output .qa-agent/current/completion-check.json
 ```
 
 Useful tuning:

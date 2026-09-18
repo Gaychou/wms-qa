@@ -87,8 +87,9 @@ cd ming-qa/skills/quality-assurance-agent
 ```
 
 脚本**只把 skill 文件复制到目标 skills 目录**，不会修改你的 `~/.bashrc`、
-`~/.zshrc`、`~/.bash_profile` 或用户 PATH。它会在 skill 目录下生成 `bin/` shim，
-如果你想要终端里能直接敲 `ming-qa`，把这个 `bin/` 目录自行加进 PATH 即可。
+`~/.zshrc`、`~/.bash_profile` 或用户 PATH。
+
+CLI 不提供 PATH 命令——命令由 agent 执行，人不需要手敲。
 
 ## 安装后
 
@@ -106,8 +107,8 @@ python "$env:USERPROFILE\.claude\skills\quality-assurance-agent\scripts\qa_agent
 
 `--agent` 可选 `claude-code` / `codex` / `both`（旧名 `claude` 仍兼容）。
 
-> 若已把 skill 的 `bin/` 加进 PATH，或自行做了别名，可直接用 `ming-qa init-project ...`。
-> 下文为简洁一律写 `ming-qa <cmd>`，按上面的路径替换即可。
+> 命令也可以由 agent 代跑——把需求告诉它即可，不必自己敲。
+> 下文提到具体命令时，都按上面这个路径形式调用。
 
 一条命令生成 `.qa-agent/` 目录结构、配置模板，并装好 E2E 环境
 （Playwright Test Agents 定义 + `@playwright/test` + `playwright.config` + 浏览器二进制）。
