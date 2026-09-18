@@ -13,8 +13,8 @@
 ## 安装
 
 ```bash
-# 跨 agent（推荐）
-npx skills add mingdui/ming-qa -g
+# 跨 agent（推荐）：装到通用目录，链接进本机所有已检测的 agent
+npx skills add mingdui/ming-qa -g -y
 
 # Claude Code 插件市场
 /plugin marketplace add mingdui/ming-qa
@@ -25,7 +25,7 @@ git clone https://github.com/mingdui/ming-qa.git
 cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude-code
 ```
 
-`npx skills` 的 `-g` 装到用户级目录对所有项目生效，省略则装到当前项目。
+`-g` 装到用户级目录对所有项目生效（省略则装到当前项目）；`-y` 一次装全 8 个技能。
 更多说明见 [安装文档](docs/installation.md)。
 
 ## 快速上手

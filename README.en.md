@@ -15,8 +15,8 @@ context → risk analysis → test case design → 【you confirm】 → scripts
 ## Install
 
 ```bash
-# Cross-agent (recommended)
-npx skills add mingdui/ming-qa -g
+# Cross-agent (recommended): installs once, links into every detected agent
+npx skills add mingdui/ming-qa -g -y
 
 # Claude Code plugin marketplace
 /plugin marketplace add mingdui/ming-qa
@@ -27,8 +27,8 @@ git clone https://github.com/mingdui/ming-qa.git
 cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude-code
 ```
 
-With `npx skills`, `-g` installs at user level for all projects; omit it to install
-into the current project. More in the [installation docs](docs/installation.md).
+`-g` installs at user level for all projects (omit it for the current project only);
+`-y` installs all 8 skills in one go. More in the [installation docs](docs/installation.md).
 
 ## Quick start
 

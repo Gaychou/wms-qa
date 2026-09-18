@@ -7,14 +7,18 @@
 ### 方式一：`npx skills`（推荐）
 
 ```bash
-npx skills add mingdui/ming-qa -g
+npx skills add mingdui/ming-qa -g -y
 ```
 
-适用于 Claude Code、Codex、Cursor 等 40 多种 agent。
+适用于 Claude Code、Codex、Cursor 等 40 多种 agent——技能装到通用的
+`~/.agents/skills/`，再链接进本机所有已检测到的 agent。
 
-`-g` 装到用户级目录（`~/.claude/skills/`），对所有项目生效；省略 `-g` 则装到当前项目。
+`-y` 一次装全 8 个技能。不带它会进入交互选择，逐个挑比较麻烦。
 
-安装时 CLI 会让你选择 **Symlink**（推荐，单一事实来源，便于更新）或 **Copy**。
+`-g` 装到用户级目录，对所有项目生效；省略 `-g` 则装到当前项目。
+
+默认用**符号链接**把技能链接进各 agent 的目录（单一事实来源，更新一次全部生效），
+想改用复制加 `--copy`。
 
 验证：
 
