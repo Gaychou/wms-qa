@@ -39,8 +39,6 @@ SKILL_DIRS = [
     "qa-testcase-designer",
 ]
 DEFAULT_MODELS = ["gpt-5.4", "claude-sonnet-5", "deepseek-v4-pro"]
-# 这些模型的网关端点强制要求流式请求（stream=true），否则返回 400 "Stream must be set to true"。
-STREAM_REQUIRED_MODELS = {"gpt-5.4"}
 # 无内置默认值：LLM 网关地址必须由用户提供（QA_AGENT_LLM_BASE_URL 环境变量或 --base-url）。
 # 未配置时多模型交叉审查会跳过并给出明确提示，不会向任何地址发起请求。
 DEFAULT_BASE_URL = ""
@@ -495,7 +493,7 @@ def safe_write_json(path: Path, content: str) -> dict[str, Any]:
     # 校验编码
     mojibake: list[dict[str, Any]] = []
     for idx, ch in enumerate(content):
-        if ch == "�":
+        if ch == "\ufffd":
             start = max(0, idx - 40)
             end = min(len(content), idx + 40)
             mojibake.append({"position": idx, "context": repr(content[start:end])})
@@ -1100,7 +1098,11 @@ def render_config_yaml(base_branch: str, commands: dict[str, list[str]]) -> str:
     lines.extend(f"    - {yaml_quote(model)}" for model in DEFAULT_MODELS)
     lines.extend(
         [
-            "  timeoutSeconds: 120",
+            "  # 单模型请求超时（秒）",
+            "  timeoutSeconds: 300",
+            "  # 默认走流式（SSE）。流式是超集，且多数网关默认或只支持流式；",
+            "  # 端点确实不支持时自动降级重试一次非流式，通常不需要改这里。",
+            "  stream: true",
             "qualityGates:",
             "  maxRepairLoops: 5",
             "  coverage:",
@@ -4708,6 +4710,56 @@ def parse_model_list(raw: str | None) -> list[str]:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
+DEFAULT_LLM_CONFIG_PATH = ".qa-agent/config/qa-agent.config.yaml"
+DEFAULT_LLM_TIMEOUT_SECONDS = 300
+
+
+def resolve_llm_settings(args: argparse.Namespace) -> dict[str, Any]:
+    """解析多模型审查的 LLM 设置：CLI 参数 > 配置文件 llm 段 > 内置默认值。
+
+    配置文件的 llm 段此前只存在于模板里，代码从没读过——用户把 llm.models 改成
+    自己的模型名，实际仍走三个内置默认值，静默无效。这里把它接上，并新增 stream。
+
+    stream 默认 True：流式是超集（SSE 聚合已实现），且多数网关默认或只支持流式；
+    端点不支持时 call_model 会自动降级一次非流式。
+
+    对应的 CLI 参数默认值因此必须是 None 而不是具体值——否则「没传参」和
+    「传了默认值」无法区分，配置段永远没机会生效。
+    """
+    explicit = getattr(args, "config", None)
+    config_path = Path(explicit) if explicit else Path(DEFAULT_LLM_CONFIG_PATH)
+    cfg: dict[str, Any] = {}
+    if config_path.exists():
+        try:
+            raw_llm = load_config(config_path).get("llm")
+            # 只有映射才认。写成列表/字符串/标量都当没配——配置坏了应回退默认值，
+            # 而不是让多模型审查直接崩。
+            cfg = raw_llm if isinstance(raw_llm, dict) else {}
+        except Exception:  # noqa: BLE001 - 解析失败同样回退
+            cfg = {}
+
+    def pick(cli_value: Any, cfg_key: str, default: Any) -> Any:
+        if cli_value not in (None, "", []):
+            return cli_value
+        value = cfg.get(cfg_key)
+        return default if value in (None, "") else value
+
+    models_raw = pick(getattr(args, "models", None), "models", None)
+    if isinstance(models_raw, list):
+        models = [str(m).strip() for m in models_raw if str(m).strip()] or list(DEFAULT_MODELS)
+    else:
+        models = parse_model_list(models_raw)
+
+    return {
+        "models": models,
+        "baseUrlEnv": str(pick(getattr(args, "base_url_env", None), "baseUrlEnv", DEFAULT_BASE_URL_ENV)),
+        "apiKeyEnv": str(pick(getattr(args, "api_key_env", None), "apiKeyEnv", DEFAULT_API_KEY_ENV)),
+        "baseUrl": str(pick(getattr(args, "base_url", None), "defaultBaseUrl", DEFAULT_BASE_URL)),
+        "timeout": int(pick(getattr(args, "timeout", None), "timeoutSeconds", DEFAULT_LLM_TIMEOUT_SECONDS)),
+        "stream": bool(pick(getattr(args, "stream", None), "stream", True)),
+    }
+
+
 def model_review_prompt(cases: dict[str, Any], context: dict[str, Any] | None) -> str:
     # 只传用例核心字段，减少 token 消耗
     slim_cases = [
@@ -4747,11 +4799,6 @@ def model_review_prompt(cases: dict[str, Any], context: dict[str, Any] | None) -
 _RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
 
 
-def model_requires_stream(model: str) -> bool:
-    """网关端点是否强制流式（如 gpt-5.4 返回 400 'Stream must be set to true'）。"""
-    return model in STREAM_REQUIRED_MODELS
-
-
 def parse_sse_content(raw: str) -> tuple[str, str | None]:
     """从 SSE 流文本聚合 delta.content，返回 (拼接内容, finish_reason)。"""
     parts: list[str] = []
@@ -4779,36 +4826,65 @@ def parse_sse_content(raw: str) -> tuple[str, str | None]:
     return "".join(parts), finish_reason
 
 
+def _looks_like_stream_unsupported(detail: str) -> bool:
+    """HTTP 错误体是否在说「这个端点不支持流式」。
+
+    用于流式请求失败后的一次性降级。只在错误体同时提到 stream 和
+    否定词时才判定，避免把无关的 400 也当成降级信号。
+    """
+    low = (detail or "").lower()
+    if "stream" not in low:
+        return False
+    return any(hint in low for hint in ("not supported", "unsupported", "must be false",
+                                        "must be set to false", "not allowed", "invalid"))
+
+
 def call_model(
     model: str,
     prompt: str,
     base_url: str,
     api_key: str,
     timeout: int,
+    *,
+    stream: bool = True,
     max_retries: int = 2,
     backoff_seconds: float = 2.0,
 ) -> dict[str, Any]:
-    body = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": "You are a senior QA reviewer. Return strict JSON only. Use Simplified Chinese for human-readable review text except product/domain terms and technical identifiers.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 16000,
-        "stream": model_requires_stream(model),
-    }
-    request_body = json.dumps(body).encode("utf-8")
+    """调用 OpenAI 兼容的 /chat/completions。
+
+    stream 默认 True。流式是这里的「超集」：SSE 聚合（parse_sse_content）本就
+    实现了，非流式反而是需要额外分支的那条路；而当下多数网关默认或只支持流式。
+    此前是靠一个硬编码的模型集合（STREAM_REQUIRED_MODELS）去猜谁需要流式，
+    换一个同样强制流式的网关就会撞 400，且用户无法自己打开。
+
+    碰到确实不支持流式的端点时自动降级重试一次非流式，用户不必预先知道该配什么。
+    """
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a senior QA reviewer. Return strict JSON only. Use Simplified Chinese for human-readable review text except product/domain terms and technical identifiers.",
+        },
+        {"role": "user", "content": prompt},
+    ]
+
+    def _body(use_stream: bool) -> bytes:
+        return json.dumps({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.1,
+            "max_tokens": 16000,
+            "stream": use_stream,
+        }).encode("utf-8")
+
+    use_stream = stream
+    downgraded = False
     attempts = 0
     last_error: dict[str, Any] | None = None
     while attempts <= max_retries:
         attempts += 1
         request = urllib.request.Request(
             chat_url(base_url),
-            data=request_body,
+            data=_body(use_stream),
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
@@ -4820,6 +4896,13 @@ def call_model(
                 raw = response.read().decode("utf-8", errors="replace")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")[-4000:]
+            # 一次性降级：端点不支持流式时改用非流式重试。降级不消耗重试次数——
+            # 它是换了一条请求形态，不是同一请求的重复。
+            if use_stream and not downgraded and _looks_like_stream_unsupported(detail):
+                use_stream = False
+                downgraded = True
+                attempts -= 1
+                continue
             last_error = {"model": model, "ok": False, "error": f"HTTP {exc.code}: {detail}", "attempts": attempts}
             if exc.code in _RETRYABLE_HTTP_STATUS and attempts <= max_retries:
                 time.sleep(backoff_seconds * (2 ** (attempts - 1)))
@@ -4834,7 +4917,7 @@ def call_model(
         except Exception as exc:  # noqa: BLE001 - CLI should preserve external error.
             return {"model": model, "ok": False, "error": str(exc), "attempts": attempts}
         try:
-            if model_requires_stream(model):
+            if use_stream:
                 content, finish_reason = parse_sse_content(raw)
             else:
                 envelope = json.loads(raw)
@@ -4924,7 +5007,8 @@ def review_cases(args: argparse.Namespace) -> None:
     cases = read_json(Path(args.cases).resolve())
     context = read_json(Path(args.context).resolve()) if args.context else None
     prompt = model_review_prompt(cases, context)
-    models = parse_model_list(args.models)
+    llm = resolve_llm_settings(args)
+    models = llm["models"]
     if args.dry_run:
         results = [
             {
@@ -4943,23 +5027,23 @@ def review_cases(args: argparse.Namespace) -> None:
             for model in models
         ]
     else:
-        api_key = os.environ.get(args.api_key_env or DEFAULT_API_KEY_ENV)
-        base_url = os.environ.get(args.base_url_env or DEFAULT_BASE_URL_ENV) or args.base_url or DEFAULT_BASE_URL
+        api_key = os.environ.get(llm["apiKeyEnv"])
+        base_url = os.environ.get(llm["baseUrlEnv"]) or llm["baseUrl"]
         if not api_key:
             # 缺 key 不中断流程：写一个「全部模型失败」的评审结果，让后续阶段继续。
             results = [
-                {"model": model, "ok": False, "error": f"Missing API key env var: {args.api_key_env or DEFAULT_API_KEY_ENV}"}
+                {"model": model, "ok": False, "error": f"Missing API key env var: {llm['apiKeyEnv']}"}
                 for model in models
             ]
         elif not base_url:
             # 同样不中断：本工具不内置任何默认网关，地址必须由用户显式配置。
             results = [
-                {"model": model, "ok": False, "error": f"Missing base URL env var: {args.base_url_env or DEFAULT_BASE_URL_ENV}"}
+                {"model": model, "ok": False, "error": f"Missing base URL env var: {llm['baseUrlEnv']}"}
                 for model in models
             ]
         else:
             # 整体超时 = 单模型 socket 超时 + 30s 余量（并发调度/结果收集）
-            overall_timeout = args.timeout + 30
+            overall_timeout = llm["timeout"] + 30
             executor = concurrent.futures.ThreadPoolExecutor(max_workers=len(models))
             try:
                 futures = [
@@ -4969,7 +5053,8 @@ def review_cases(args: argparse.Namespace) -> None:
                         prompt,
                         base_url,
                         api_key,
-                        args.timeout,
+                        llm["timeout"],
+                        stream=llm["stream"],
                         max_retries=getattr(args, "max_retries", 2),
                         backoff_seconds=getattr(args, "retry_backoff_seconds", 2.0),
                     )
@@ -9272,7 +9357,7 @@ def _check_sc001_pass_rate(latest_run: dict, report_html: str) -> dict | None:
 def _check_sc002_case_status(report_html: str, latest_run: dict) -> dict | None:
     """SC-002：有执行结果的用例，状态列是否真的渲染成了执行结果。
 
-    逐用例核对，而不是数徽章总数。原判据是「存在 confirmed 徽章 ��� 存在 PASS」，
+    逐用例核对，而不是数徽章总数。原判据是「存在 confirmed 徽章 且 存在 PASS」，
     但 confirmed 徽章只在「该用例没有 run」时出现——那是合法的（本轮没跑到它）。
     只要一次运行是部分执行，原判据就必然误报。
 
@@ -10104,11 +10189,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--cases", required=True)
     p.add_argument("--context")
     p.add_argument("--output", default=".qa-agent/current/model-review.json")
-    p.add_argument("--models", default=",".join(DEFAULT_MODELS))
-    p.add_argument("--base-url", default=DEFAULT_BASE_URL)
-    p.add_argument("--base-url-env", default=DEFAULT_BASE_URL_ENV)
-    p.add_argument("--api-key-env", default=DEFAULT_API_KEY_ENV)
-    p.add_argument("--timeout", type=int, default=300)
+    # 默认值一律留 None：具体默认值由 resolve_llm_settings 决定，
+    # 这样配置文件 llm 段才有机会生效（传了才叫显式指定）。
+    p.add_argument("--config", default=None,
+                   help=f"配置文件路径，默认 {DEFAULT_LLM_CONFIG_PATH}")
+    p.add_argument("--models", default=None,
+                   help="逗号分隔的模型名；缺省读 config 的 llm.models，再缺省用内置默认三个")
+    p.add_argument("--base-url", default=None)
+    p.add_argument("--base-url-env", default=None)
+    p.add_argument("--api-key-env", default=None)
+    p.add_argument("--timeout", type=int, default=None, help=f"单模型超时秒数，默认 {DEFAULT_LLM_TIMEOUT_SECONDS}")
+    p.add_argument("--stream", dest="stream", action="store_true", default=None,
+                   help="强制流式（默认即流式；端点不支持时自动降级一次非流式）")
+    p.add_argument("--no-stream", dest="stream", action="store_false",
+                   help="关闭流式，改用普通 JSON 响应")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--max-retries", type=int, default=2, help="max retries per model on retryable transport/HTTP errors")
     p.add_argument("--retry-backoff-seconds", type=float, default=2.0, help="base seconds for exponential backoff between retries")
