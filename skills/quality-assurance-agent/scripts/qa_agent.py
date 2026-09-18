@@ -5608,7 +5608,7 @@ def env_example_text(accounts: list[dict[str, Any]], services: list[dict[str, An
         ]),
         ("LLM", [
             ("QA_AGENT_LLM_BASE_URL", "", "LLM 网关地址（覆盖 env.shared 默认值）"),
-            ("QA_AGENT_LLM_API_KEY", "", "LLM API Key（必填）"),
+            ("QA_AGENT_LLM_API_KEY", "", "LLM API Key（可选；不填则跳过多模型交叉审查，其余流程不受影响）"),
         ]),
     ]
     lines = [
@@ -5765,11 +5765,12 @@ def init_project(args: argparse.Namespace) -> None:
             **({"verify": mysql["verify"]} if mysql.get("verify") else {}),
         },
         "nextActions": [
-            "回到 Claude Code / Codex，说：使用 quality-assurance-agent，验收当前改动 —— "
-            "之后由 agent 驱动：它会跑 doctor、按 scope 判定必需工具链，并在需要你配合时停下。",
-            "它停下来时通常只要你做一件事：补齐 .qa-agent 下的配置。"
-            "必填的是测试账号（config/env.shared 的 QA_USER_USERNAME/QA_USER_PASSWORD）"
-            "和服务地址；LLM API Key 在 local/.env，是可选增强，不填则跳过交叉审查阶段。",
+            # 受众是「正在执行这条命令的人」——通常是 agent。不要去写「回到 agent 说句话」，
+            # 那对 agent 自身是循环的，对人也没必要。
+            "下一步：运行 doctor --strict --check-services 体检环境。",
+            "缺什么按提示引导用户补齐：必填通常是测试账号（config/env.shared 的 "
+            "QA_USER_USERNAME/QA_USER_PASSWORD）与目标服务地址；LLM API Key 在 local/.env，"
+            "是可选的交叉审查增强，不填则该阶段跳过。",
         ],
     }
     if getattr(args, "json", None):
@@ -6302,6 +6303,27 @@ def default_skills_dir(target: str) -> Path:
     return default_codex_skills_dir()
 
 
+def _remove_install_target(path: Path) -> None:
+    """删除安装目标，兼容三种形态：普通目录、符号链接、Windows junction。
+
+    Windows 上 npx skills 建的是 **junction**（reparse tag MOUNT_POINT）。
+    Python 的 Path.is_symlink() 与 os.path.islink() 都不认它（lstat 看到的是目录），
+    但 shutil.rmtree() 会直接抛 "Cannot call rmtree on a symbolic link"——
+    于是「先判断是不是链接」这种分支写法必然漏掉 junction。
+
+    所以这里对 rmtree 的失败兜底：junction 用 os.rmdir 删除**链接本身**，绝不动真身
+    （真身在 .agents/skills 下，是另一份真实安装）。
+    """
+    if path.is_symlink() or os.path.islink(path):
+        path.unlink()
+        return
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        # junction 走这里：rmdir 只摘掉链接，不会递归删除目标目录
+        os.rmdir(path)
+
+
 def _install_skills_from(source_root: Path, destination_root: Path, *, force: bool) -> list[str]:
     """把 source_root 下的 8 个 skill 目录覆盖安装到 destination_root，返回已安装目录名。"""
     destination_root.mkdir(parents=True, exist_ok=True)
@@ -6312,10 +6334,10 @@ def _install_skills_from(source_root: Path, destination_root: Path, *, force: bo
         dst = destination_root / skill_dir
         if not src.exists():
             continue
-        if dst.exists():
+        if dst.exists() or dst.is_symlink():
             if not force:
                 raise QaAgentError(f"Destination exists, rerun with --force: {dst}")
-            shutil.rmtree(dst)
+            _remove_install_target(dst)
         shutil.copytree(src, dst, ignore=ignore)
         installed.append(skill_dir)
     return installed
@@ -6709,7 +6731,7 @@ def doctor(args: argparse.Namespace) -> None:
                     bool(env_key and qa_env_value(repo, env_key)),
                     f"{env_key}: {'present' if env_key and qa_env_value(repo, env_key) else 'missing'}",
                     category="secrets",
-                    next_action=f"在 .qa-agent/local/.env 中配置 {env_key}" if env_key and not qa_env_value(repo, env_key) else "",
+                    next_action=f"在 .qa-agent/config/env.shared 中配置 {env_key}（也可写到 local/.env 覆盖）" if env_key and not qa_env_value(repo, env_key) else "",
                 )
         services_data = load_services_config(repo)
         services = services_data.get("services", []) if isinstance(services_data.get("services"), list) else []

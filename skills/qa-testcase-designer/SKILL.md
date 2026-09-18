@@ -78,7 +78,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module <mod
 
 ### 3. 生成用例
 
-先读取 `.claude/skills/quality-assurance-agent/references/test-case-schema.md` 确认用例 JSON 的完整字段规范（优先级规则、验证规则、quality gate shape、environment check shape）。
+先读取 `$QA_AGENT_DIR/references/test-case-schema.md` 确认用例 JSON 的完整字段规范（优先级规则、验证规则、quality gate shape、environment check shape）。
 
 - 优先复用已有用例（相同 ID 和历史执行记录保持不变）
 - 增量生成只覆盖新增或变更的业务操作路径
@@ -93,7 +93,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module <mod
 ### 5. 渲染+审查
 
 运行 `render-cases` 生成 HTML 确认页。
-先读取 `.claude/skills/quality-assurance-agent/references/model-review.md` 了解三模型审查的具体流程和输出格式。
+先读取 `$QA_AGENT_DIR/references/model-review.md` 了解三模型审查的具体流程和输出格式。
 
 运行 `review-cases` 做三模型交叉审查。审查反馈中的有效发现要**合成后修改 test-cases.json**——不能只跑一遍 review 就原样提交。review 的边界值缺失、优先级评级、模糊断言、缺失负向路径这些建议，你要逐条判断是否采纳，采纳的改到用例里，不采纳的记录理由。
 

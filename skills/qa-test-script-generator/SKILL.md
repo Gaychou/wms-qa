@@ -43,7 +43,7 @@ description: >
 
 ### 2. 生成 spec-task
 
-先读取 `.claude/skills/quality-assurance-agent/references/spec-task-planning.md` 了解 spec-task 的字段契约、覆盖规则和 completion 门禁规则。
+先读取 `$QA_AGENT_DIR/references/spec-task-planning.md` 了解 spec-task 的字段契约、覆盖规则和 completion 门禁规则。
 
 运行 `generate-spec-tasks`。确保：
 - 每条 task 有 `oracle.ui/api/db/sideEffects/negativeAssertions` 字段

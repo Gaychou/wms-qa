@@ -71,7 +71,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module agen
 
 ### 6. 环境检查
 
-先读取 `.claude/skills/quality-assurance-agent/references/project-test-profile.md` 了解技术栈检测和测试命令映射。
+先读取 `$QA_AGENT_DIR/references/project-test-profile.md` 了解技术栈检测和测试命令映射。
 
 运行 `doctor --strict --check-services`，输出到 `.qa-agent/current/environment-checks.json`。
 
@@ -87,7 +87,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"show-knowledge --repo . --module agen
 
 缺失的服务、凭证、运行时、数据库连接、浏览器依赖等，一律记录到 environment-checks.json 的证据中。
 
-如果 scope 涉及数据库层验证，读取 `.claude/skills/quality-assurance-agent/references/mysql-mcp-integration.md` 了解 MySQL MCP 的安装和连接要求。如果 MCP 不可用，记录为阻断环境证据而非静默跳过。
+如果 scope 涉及数据库层验证，读取 `$QA_AGENT_DIR/references/mysql-mcp-integration.md` 了解 MySQL MCP 的安装和连接要求。如果 MCP 不可用，记录为阻断环境证据而非静默跳过。
 
 ### 9. 移交到下游
 

@@ -51,9 +51,9 @@ description: >
 ### 2. 执行方式
 
 - api 层 bash 脚本：`python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env --repo . --script <script-path> --extra KEY=VAL...`
-- 需要数据库验证的 integration 层：先读取 `.claude/skills/quality-assurance-agent/references/mysql-mcp-integration.md` 了解查库方法，跑脚本后**按 `oracle.db` 结构化逐条校验**，记录「查询摘要 + 期望 + 实际 + 状态」到 evidence
+- 需要数据库验证的 integration 层：先读取 `$QA_AGENT_DIR/references/mysql-mcp-integration.md` 了解查库方法，跑脚本后**按 `oracle.db` 结构化逐条校验**，记录「查询摘要 + 期望 + 实际 + 状态」到 evidence
 - `verificationMode: direct-db` 的数据完整性 task：直接通过 MySQL MCP `read_query` 执行 `oracle.db[].query`，逐条断言，不允许降级为「手工核对通过」
-- e2e 层：先读取 `.claude/skills/quality-assurance-agent/references/playwright-agent-integration.md` 了解 Playwright 规划器/生成器/修复器流程，通过 Playwright MCP 真实浏览器操作（navigate → login → click → snapshot → network_requests）
+- e2e 层：先读取 `$QA_AGENT_DIR/references/playwright-agent-integration.md` 了解 Playwright 规划器/生成器/修复器流程，通过 Playwright MCP 真实浏览器操作（navigate → login → click → snapshot → network_requests）
 
 **E2E 障碍处理、执行路径、环境变量、MySQL MCP 降级**：详见 `references/e2e-troubleshooting.md`。
 
@@ -108,8 +108,8 @@ description: >
 
 ### 7. 跑 completion 门禁
 
-先读取 `.claude/skills/quality-assurance-agent/references/quality-gates.md` 了解各级质量门禁（环境、需求、单元、API、E2E、代码审查）的定义和要求。
-读取 `.claude/skills/quality-assurance-agent/references/spec-task-planning.md` 复习 completion gate 的判定规则。
+先读取 `$QA_AGENT_DIR/references/quality-gates.md` 了解各级质量门禁（环境、需求、单元、API、E2E、代码审查）的定义和要求。
+读取 `$QA_AGENT_DIR/references/spec-task-planning.md` 复习 completion gate 的判定规则。
 
 ```bash
 python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-completion --cases .qa-agent/current/test-cases.json \

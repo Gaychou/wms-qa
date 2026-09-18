@@ -72,7 +72,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-readiness \
 
 ### 4. 渲染报告
 
-先读取 `.claude/skills/quality-assurance-agent/references/html-report.md` 了解报告结构、provenance 块和命名约定。
+先读取 `$QA_AGENT_DIR/references/html-report.md` 了解报告结构、provenance 块和命名约定。
 
 - 渲染基础报告：`render-report`（带 `--run`、`--completion-check`，不含 readiness-check）
 - 跑 `assert-report-freshness` —— 报告 stale 则重新渲染
