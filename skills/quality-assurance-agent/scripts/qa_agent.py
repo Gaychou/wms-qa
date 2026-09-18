@@ -3072,8 +3072,13 @@ def oracle_for_spec_task(case: dict[str, Any], layer: str, focus_kind: str) -> d
         "sideEffects": [],
         "negativeAssertions": [],
     }
-    traceability = case.get("traceability") or []
-    source_risk_id = traceability[0] if traceability else ""
+    # 风险关联只能取自用例显式声明的风险 id。
+    # 历史缺陷：这里曾取 traceability[0]，而该字段按 schema 还允许 requirement id /
+    # 代码路径 / API 路径（见 references/test-case-schema.md）。使用者照 schema 写
+    # API 路径时，oracle 的 sourceRiskId 就被写成 "POST /open-box/open-by-usd"，
+    # 风险映射门禁因此恒判「P0/P1 风险未被覆盖」——误报，且逼人去补不存在的覆盖。
+    case_risk_ids = _case_risk_ids(case)
+    source_risk_id = case_risk_ids[0] if case_risk_ids else ""
     data_hint = case.get("data") or {}
     table_hint = str(data_hint.get("tableHint", "")) if isinstance(data_hint, dict) else ""
 
@@ -3170,6 +3175,10 @@ def build_spec_task(case: dict[str, Any], layer: str, focus: dict[str, str], ind
         "businessActor": case.get("businessActor", ""),
         "operationPath": case.get("operationPath", " -> ".join(map(str, case.get("steps", [])))),
         "assertions": _build_task_assertions(case, focus),
+        # 用例关联的全部风险 id 落在 task 级字段上（qa-test-script-generator/SKILL.md
+        # 就是这么定义它的）。oracle 各项的 sourceRiskId 只带主风险一个，多风险用例
+        # 靠这里补全——风险映射门禁两处都读。
+        "traceability": _case_risk_ids(case),
         "implementationStatus": "pending",
         "executionStatus": "not-run",
         "command": command_for_spec_task(layer, target_project, target_file, project_kind),
@@ -4176,15 +4185,26 @@ def assert_completion_data(
         if case_id not in cases_by_id:
             findings.append({"type": "task-without-confirmed-case", "severity": "fail", **status_pair})
 
-        if implementation_status in SPEC_TASK_UNIMPLEMENTED_STATUS or implementation_status not in SPEC_TASK_TERMINAL_IMPLEMENTATION_STATUS:
+        implemented = not (
+            implementation_status in SPEC_TASK_UNIMPLEMENTED_STATUS
+            or implementation_status not in SPEC_TASK_TERMINAL_IMPLEMENTATION_STATUS
+        )
+        if not implemented:
             counters["unimplemented"] += 1
-            findings.append({"type": "task-not-implemented", "severity": "fail", **status_pair})
+            # 「计划没建完」不是「业务没验证」。这套 task 是按测试金字塔自动展开的，
+            # 建不建属于计划完成度——降为 warn，只报告不阻断（阻断由下文用例层的
+            # case-not-verified 负责）。曾经这里是 fail，导致业务用例全部执行通过、
+            # case-not-verified 已清零时，门禁仍判 failed，使用者被迫补大量仅为凑数的
+            # 测试来迁就粒度——那是让门禁在生产工作量，而不是在生产置信度。
+            findings.append({"type": "task-not-implemented", "severity": "warn", **status_pair})
         else:
             counters["implemented"] += 1
 
         if execution_status in SPEC_TASK_UNEXECUTED_STATUS or execution_status not in SPEC_TASK_TERMINAL_EXECUTION_STATUS:
             counters["unexecuted"] += 1
-            findings.append({"type": "task-not-executed", "severity": "fail", **status_pair})
+            # 没实现的 task 谈不上「没执行」，不重复记一条账
+            if implemented:
+                findings.append({"type": "task-not-executed", "severity": "fail", **status_pair})
             continue
 
         if execution_status == "passed":
