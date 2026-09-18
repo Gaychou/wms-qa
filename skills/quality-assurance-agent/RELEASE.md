@@ -12,10 +12,14 @@
 本工具**没有自更新机制**。用户通过上述渠道自带的更新能力升级：
 
 ```bash
-npx skills update ming-qa -g
+# npx skills 渠道：按项目更新（技能名不是仓库名，传 ming-qa 会找不到）
+npx skills update
 # 或
 /plugin update ming-qa@ming-qa
 ```
+
+> 源码安装（方式三）没有登记进 skills-lock，`npx skills` 更新不到，需重跑
+> `install.sh --force` / `install.ps1 -Force`。
 
 ## 发布前自检
 

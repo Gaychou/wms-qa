@@ -43,8 +43,19 @@ npx skills ls -a claude-code
 升级：
 
 ```bash
-npx skills update ming-qa -g
+# 在项目里（skills-lock.json 记录了来源）：更新本项目的全部 skill
+npx skills update
+
+# 全局安装的（仅对通过 npx skills add -g 装的有效）：
+npx skills update -g
 ```
+
+> 注意不要写 `npx skills update ming-qa`。`ming-qa` 是**仓库名**，不是 skill 名——
+> 装进去的 8 个 skill 叫 `quality-assurance-agent` / `qa-*`。按仓库名更新会得到
+> `No installed skills found matching: ming-qa`。
+>
+> 用**源码安装脚本**（方式三）装的没有登记进 skills-lock，`npx skills` 找不到它，
+> 升级方式是重跑安装脚本加 `--force` / `-Force`。
 
 ## 方式二：Claude Code 官方插件市场
 

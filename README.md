@@ -60,6 +60,15 @@ ming-qa init-project --repo . --agent claude-code  # claude-code / codex / both
 ming-qa doctor --repo . --strict --check-services
 ```
 
+> `ming-qa` 来自 skill 的 `bin/` 目录，**安装后不会自动进 PATH**。要么把它加进去，
+> 要么用完整路径调用：
+>
+> ```bash
+> python .claude/skills/quality-assurance-agent/scripts/qa_agent.py init-project --repo . --agent claude-code
+> ```
+>
+> Windows PowerShell 用 `python .claude\skills\...`（反斜杠）。
+
 然后在 Claude Code / Codex 里说：
 
 ```

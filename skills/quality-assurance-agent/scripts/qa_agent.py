@@ -1657,6 +1657,21 @@ def resolve_home_dir() -> Path:
         raise
 
 
+def cli_invocation() -> str:
+    """返回**用户可以直接复制执行**的 CLI 调用前缀。
+
+    文档与工具输出里一律写 `ming-qa <cmd>`，但那要求 skill 的 bin/ 已经在 PATH 上。
+    用 npx skills 或插件市场安装的用户并没有做过这一步——照抄只会得到
+    `ming-qa: command not found`，而这恰恰是他们安装完之后敲的第一条命令。
+
+    所以这里实际探测一次：PATH 上有 ming-qa 就沿用，没有就回退成本脚本的真实路径。
+    输出给用户的命令必须是能直接跑通的那一种。
+    """
+    if os.environ.get("QA_AGENT_CLI") or shutil.which("ming-qa"):
+        return "ming-qa"
+    return f'python "{Path(__file__).resolve()}"'
+
+
 def codex_config_path() -> Path:
     codex_home = os.environ.get("CODEX_HOME")
     return (Path(codex_home) if codex_home else resolve_home_dir() / ".codex") / "config.toml"
@@ -5635,7 +5650,7 @@ def init_project(args: argparse.Namespace) -> None:
         "nextActions": [
             "填写 config/env.shared 中的测试账号（QA_USER_USERNAME/QA_USER_PASSWORD）和服务地址（QA_WEB_BASE_URL/QA_API_BASE_URL）。",
             "填写 local/.env 中的 LLM API Key（QA_AGENT_LLM_API_KEY）。",
-            "运行 ming-qa doctor --repo . --strict --check-services --auto-start --config-mysql-mcp。",
+            f"运行 {cli_invocation()} doctor --repo . --strict --check-services --auto-start --config-mysql-mcp。",
             "打开 Claude Code 或 Codex Agent，输入：使用 quality-assurance-agent，验收当前改动（或 验收浏览购买商品流程）。",
         ],
     }
@@ -6477,7 +6492,7 @@ def doctor(args: argparse.Namespace) -> None:
                 runtime_ok,
                 "runtime ready (pkg+installed+config)" if runtime_ok else "missing: " + "; ".join(missing),
                 required=False,
-                next_action="" if runtime_ok else "ming-qa install-playwright-runtime --repo .",
+                next_action="" if runtime_ok else f"{cli_invocation()} install-playwright-runtime --repo .",
             )
             add(
                 "playwright_browsers",
@@ -6630,9 +6645,17 @@ def doctor(args: argparse.Namespace) -> None:
                     detail,
                     category="services",
                     next_action=(
-                        f"已尝试自动启动 {target['name']} 服务但失败，请手动启动；仍不可达时查看日志 .qa-agent/current/{target['name']}.out.log（前端常见：缺依赖，先 cd 到服务目录执行 npm install）。"
-                        f"若探活『成功』但下游请求失败，核对上面的 Server 标识是否是预期进程——端口可能被无关进程占用；"
-                        f"在 config/services.json 为该服务声明 healthUrl 可获得真实的健康判定"
+                        # 只有真的尝试过自动启动才说「已尝试」——之前无论有没有传
+                        # --auto-start 都这么写，用户会以为自己漏看了什么。
+                        (
+                            f"已尝试自动启动 {target['name']} 服务但失败，请手动启动；"
+                            if getattr(args, "auto_start", False)
+                            else f"{target['name']} 服务不可达，请先启动它（或加 --auto-start 让 doctor 代为尝试）；"
+                        )
+                        + f"仍不可达时查看日志 .qa-agent/current/{target['name']}.out.log"
+                          f"（前端常见：缺依赖，先 cd 到服务目录执行 npm install）。"
+                        + "若探活『成功』但下游请求失败，核对上面的 Server 标识是否是预期进程——端口可能被无关进程占用；"
+                          "在 config/services.json 为该服务声明 healthUrl 可获得真实的健康判定"
                         if target.get("required") and not target.get("ok")
                         else ""
                     ),
@@ -6671,8 +6694,8 @@ def doctor(args: argparse.Namespace) -> None:
     if blocking_failed:
         print("结论：环境未就绪，请先修复以上必须项再重新运行 doctor。")
         print(f"\n下一步：")
-        for check in blocking_failed[:5]:
-            print(f"  1. {check.get('nextAction') or check['detail']}")
+        for idx, check in enumerate(blocking_failed[:5], 1):
+            print(f"  {idx}. {check.get('nextAction') or check['detail']}")
         if args.strict:
             print("\n提示：已启用 --strict，必须项修复后会自动退出。不加 --strict 可跳过此限制。")
     else:

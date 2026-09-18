@@ -64,6 +64,15 @@ ming-qa init-project --repo . --agent claude-code  # claude-code / codex / both
 ming-qa doctor --repo . --strict --check-services
 ```
 
+> `ming-qa` lives in the skill's `bin/` directory and **is not added to PATH by the
+> installer**. Either add that directory to PATH, or call the script directly:
+>
+> ```bash
+> python .claude/skills/quality-assurance-agent/scripts/qa_agent.py init-project --repo . --agent claude-code
+> ```
+>
+> On Windows PowerShell use `python .claude\skills\...` (backslashes).
+
 Then, in your agent:
 
 ```
