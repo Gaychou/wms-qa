@@ -5530,27 +5530,74 @@ def load_accounts_config(repo: Path) -> dict[str, Any]:
     }
 
 
+def self_invocation() -> str:
+    """本 CLI 可被直接复制的调用形式。
+
+    用于工具输出里的「下一步」提示——提示里给出的命令必须是能跑通的。
+    之前有四处硬编码成 `qa_agent.py init-project --repo .`：缺 python 前缀、
+    缺路径，用户照抄得到的是 command not found。
+    """
+    explicit = os.environ.get("QA_AGENT_CLI")
+    if explicit:
+        return explicit
+    return f'python "{Path(__file__).resolve()}"'
+
+
 def load_services_config(repo: Path) -> dict[str, Any]:
     """服务配置：local/services.local.json（私有）优先 → config/services.json（公有）兜底。"""
     return _load_layered_config(repo, "services")
 
 
 def _load_layered_config(repo: Path, kind: str) -> dict[str, Any]:
-    """服务配置加载：local/{kind}.local.json（私有）→ config/{kind}.json（公有）→ 空。"""
+    """加载分层配置：local/{kind}.local.json（私有）与 config/{kind}.json（公有）**按 id 合并**。
+
+    私有文件里的同 id 条目覆盖公有，其余条目原样保留；私有里新增的条目追加进来。
+
+    这里刻意是合并而不是二选一。文件名叫 local override，用户只写「想改的那几项」
+    是完全符合直觉的用法——二选一的话，他没写到的服务会静默消失，
+    而报错只会说「某服务不可达」，根本看不出是配置文件被整体替换了。
+    """
     qa_root = repo / ".qa-agent"
     local_path = qa_root / "local" / f"{kind}.local.json"
     config_path = qa_root / "config" / f"{kind}.json"
-    if local_path.exists():
-        data = read_json(local_path)
-    elif config_path.exists():
-        data = read_json(config_path)
-    else:
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("version", "1.0")
-    data.setdefault(kind, [])
-    return data
+
+    public = read_json(config_path) if config_path.exists() else {}
+    private = read_json(local_path) if local_path.exists() else {}
+    public = public if isinstance(public, dict) else {}
+    private = private if isinstance(private, dict) else {}
+
+    merged: dict[str, Any] = {**public, **private}
+    public_items = public.get(kind)
+    private_items = private.get(kind)
+    if isinstance(public_items, list) and isinstance(private_items, list):
+        merged[kind] = _merge_by_id(public_items, private_items)
+    elif isinstance(private_items, list):
+        merged[kind] = private_items
+
+    merged.setdefault("version", "1.0")
+    merged.setdefault(kind, [])
+    return merged
+
+
+def _merge_by_id(public_items: list[Any], private_items: list[Any]) -> list[Any]:
+    """按 id 合并两组条目：同 id 用私有那条，新的追加到末尾，保持公有顺序。"""
+    def key_of(item: Any) -> str:
+        if not isinstance(item, dict):
+            return ""
+        return str(item.get("id") or item.get("name") or "")
+
+    merged: list[Any] = []
+    index: dict[str, int] = {}
+    for item in public_items:
+        index[key_of(item)] = len(merged)
+        merged.append(item)
+    for item in private_items:
+        key = key_of(item)
+        if key and key in index:
+            merged[index[key]] = item      # 同 id：私有覆盖公有
+        else:
+            merged.append(item)
+    return merged
 
 
 def env_example_text(accounts: list[dict[str, Any]], services: list[dict[str, Any]]) -> str:
@@ -5669,7 +5716,7 @@ def init_project(args: argparse.Namespace) -> None:
     services = infer_service_examples(repo)
     services_data = {
         "version": "1.0",
-        "_comment": "服务结构定义：URL 值配置在 env（config/env.shared 公有默认 / local/.env 私有覆盖），通过 baseUrlEnv 环境变量读取；services.local.json 用于私有覆盖服务结构（如 dir/startCmd/readySignal）。",
+        "_comment": "服务结构定义：URL 值配置在 env（config/env.shared 公有默认 / local/.env 私有覆盖），通过 baseUrlEnv 环境变量读取；local/services.local.json 用于按 id 私有覆盖服务结构（如 dir/startCmd/readySignal），未列出的服务保持本文件的定义。",
         "services": [{k: v for k, v in s.items() if k != "defaultUrl"} for s in services],
     }
     written = {
@@ -5755,7 +5802,11 @@ def init_project(args: argparse.Namespace) -> None:
             status = "已配置" if (cmd and d) else "缺少 startCmd/dir，需手动补全"
             print(f"  {sid}: cd {d} && {cmd}  (ready: {sig})  [{status}]")
             if not cmd or not d:
-                print(f"    → 请编辑 services.local.json 补全 dir 和 startCmd 字段")
+                print(
+                    "    → 补全启动方式：把这些字段写进 "
+                    ".qa-agent/local/services.local.json（按 id 覆盖，未列出的服务保持原样）。"
+                    "该文件私有、不进 git；想与团队共享就改 config/services.json"
+                )
     print("\n下一步：")
     for action in summary["nextActions"]:
         print(f"- {action}")
@@ -6467,14 +6518,14 @@ def doctor(args: argparse.Namespace) -> None:
             not missing_layout,
             "ok" if not missing_layout else "missing: " + ", ".join(missing_layout),
             category="setup",
-            next_action="qa_agent.py init-project --repo ." if missing_layout else "",
+            next_action=f"{self_invocation()} init-project --repo ." if missing_layout else "",
         )
         add(
             "qa_config",
             effective_config_path.exists(),
             str(effective_config_path) if effective_config_path.exists() else "missing",
             category="setup",
-            next_action="qa_agent.py init-project --repo ." if not effective_config_path.exists() else "",
+            next_action=f"{self_invocation()} init-project --repo ." if not effective_config_path.exists() else "",
         )
         local_env_path = repo / ".qa-agent" / "local" / ".env"
         add(
@@ -6645,7 +6696,7 @@ def doctor(args: argparse.Namespace) -> None:
             bool(accounts),
             f"{len(accounts)} accounts" if accounts else "账号凭证未配置（QA_USER_USERNAME/PASSWORD）",
             category="secrets",
-            next_action="运行 qa_agent.py init-project --repo ." if not accounts else "",
+            next_action=f"运行 {self_invocation()} init-project --repo ." if not accounts else "",
         )
         for account in accounts:
             if not isinstance(account, dict):
@@ -6667,7 +6718,7 @@ def doctor(args: argparse.Namespace) -> None:
             bool(services),
             f"{len(services)} services" if services else "missing config/services.json",
             category="services",
-            next_action="运行 qa_agent.py init-project --repo ." if not services else "",
+            next_action=f"运行 {self_invocation()} init-project --repo ." if not services else "",
         )
         for service in services:
             if not isinstance(service, dict):
@@ -6780,10 +6831,27 @@ def doctor(args: argparse.Namespace) -> None:
     if blocking_failed:
         print("结论：环境未就绪，请先修复以上必须项再重新运行 doctor。")
         print(f"\n下一步：")
-        for idx, check in enumerate(blocking_failed[:5], 1):
-            print(f"  {idx}. {check.get('nextAction') or check['detail']}")
+        # 去重：多个检查项常常指向同一个动作（例如 qa_layout 与 qa_config 都指向
+        # init-project），逐条打印会给出重复的 1. 2. 3.，看着像清单错了。
+        seen_actions: set[str] = set()
+        idx = 0
+        for check in blocking_failed[:5]:
+            action = check.get("nextAction") or check["detail"]
+            if action in seen_actions:
+                continue
+            seen_actions.add(action)
+            idx += 1
+            print(f"  {idx}. {action}")
         if args.strict:
-            print("\n提示：已启用 --strict，必须项修复后会自动退出。不加 --strict 可跳过此限制。")
+            # 出口指向 --ignore（显式、逐项、有记录），而不是「去掉 --strict」——
+            # 后者是一刀切绕过，且 agent 侧固定带 --strict，那个建议根本用不上。
+            print(
+                "\n提示：以上必须项如果本次确实用不到（例如项目没有前端，web 服务本就起不来），"
+                "可以逐项豁免，不必为了它把整个检查关掉：\n"
+                f"  {self_invocation()} doctor --repo . --strict --check-services --ignore <检查名>\n"
+                f"本次未通过的检查名：{', '.join(check['name'] for check in blocking_failed[:5])}\n"
+                "被豁免的项仍会出现在输出里，只是不再阻塞。"
+            )
     else:
         has_optional = optional_failed and len(optional_failed) > 0
         suffix = "（可选检查项不影响验收流程，建议后续处理）" if has_optional else ""

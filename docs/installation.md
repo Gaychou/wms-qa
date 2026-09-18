@@ -117,6 +117,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py" doctor --repo . --strict --check-serv
 | 插件安装报 SSH 失败 | 市场默认走 SSH 克隆。改用 HTTPS：`/plugin marketplace add https://github.com/mingdui/ming-qa.git` |
 | `python` 命令不存在 | 装 Python 3.9+ 并确保在 PATH 中；Windows 上可用 `py -3` |
 | `doctor` 输出中文乱码 | Windows 上设置 `PYTHONIOENCODING=utf-8` |
+| `doctor` 报某个必须项，但本项目用不到 | 用 `--ignore <检查名>` 逐项豁免（检查名会在输出里列出）。被豁免的项仍会显示，只是不再阻塞。agent 遇到这情况也会提示你 |
 
 ## 卸载
 

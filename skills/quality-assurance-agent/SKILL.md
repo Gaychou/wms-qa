@@ -79,7 +79,10 @@ description: >
 
 1. 明确 scope：用户提到了什么需求、模块、diff、branch、PR 还是业务流程。如果 scope 涉及真实本地 E2E（需前后端联调+浏览器操作），先读取 `references/real-local-e2e.md` 了解特殊流程。
 2. 如果 `.qa-agent/config`、`.qa-agent/cases`、`.qa-agent/local` 或 `.qa-agent/current` 目录不存在，先运行 `init-project`。
-3. 运行 `doctor --strict --check-services` 检查环境可达性。前后端服务不可达则启动后再继续。必须修复项未清零前不进入风险分析。
+3. 运行 `doctor --strict --check-services` 检查环境可达性。前后端服务不可达则先尝试启动（`--auto-start`）。必须修复项清零前不进入风险分析。
+   - **必须项里如果有本次 scope 根本不需要的**（典型：项目没有前端，而 `web` 服务是 init 自动探测出来的），不要卡在这里，也不要绕过去装看不见。用 `--ignore <检查名>` **显式豁免**，例如 `doctor --repo . --strict --check-services --ignore service:web:reachable`。
+   - 豁免必须留痕：把「豁免了哪一项、为什么本次不需要」记进 `.qa-agent/current/environment-checks.json`，并**如实告诉用户豁免了什么**——豁免是用户知情下的取舍，不是悄悄跳过。
+   - 另一条常见路径是让用户把服务起起来。先问清楚：这个服务本次 scope 用得到吗？用得到就起，用不到才豁免。
 4. **工具链门禁**：结合 scope（步骤 1）和 doctor 检查结果（步骤 3），判定本次验收的必需工具链：
    - scope 涉及前端 E2E（浏览器操作 / UI 流程）→ Playwright **运行时**为必须项（`@playwright/test` 声明 + 已安装 + `playwright.config` + 浏览器二进制，对应 doctor 的 `playwright_runtime` / `playwright_browsers` 两项须为 OK）。`playwright_assets` 里的 agents 定义（planner/generator/healer）是可选增强，只在需要生成/修复 spec 时才要求
    - scope 涉及数据库资金 / 状态验证 → MySQL MCP 为必须项
