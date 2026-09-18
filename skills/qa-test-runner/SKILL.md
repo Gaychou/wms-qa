@@ -16,7 +16,7 @@ description: >
 >     QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
 >
 > 运行环境若已告知本 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
-> 完整命令语法见 `quality-assurance-agent/references/cli-reference.md`。
+> 完整命令语法见 `$QA_AGENT_DIR/references/cli-reference.md`。
 
 ## 你的定位
 
@@ -80,7 +80,7 @@ description: >
 
 ### 5. 失败修复循环
 
-先读 `quality-assurance-agent/references/failure-repair-loop.md`——完整流程定义在那里，不要跳过。
+先读 `$QA_AGENT_DIR/references/failure-repair-loop.md`——完整流程定义在那里，不要跳过。
 
 每个失败都要走完整个循环，不允许「改一下看看，不行就换下一个失败」：
 
