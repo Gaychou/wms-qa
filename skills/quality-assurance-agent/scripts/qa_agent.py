@@ -8842,11 +8842,46 @@ def _render_unverified_cases(cases: list[dict], spec_tasks: dict) -> str:
 
 
 # === 项目增强函数 (from project) ===
-def project_risk_coverage(cases_data: dict[str, Any]) -> dict[str, list[str]]:
-    """从用例 traceability 反推「风险 → 覆盖它的用例」映射。
+_RISK_ID_RE = re.compile(r"^RISK-[A-Za-z0-9]+-\d+$")
+_RISK_ID_TOKEN_RE = re.compile(r"RISK-[A-Za-z0-9]+-\d+")
+# 原始证据/日志里出现风险号不构成「关联声明」，不参与完整性比对
+_RISK_SCAN_EXCLUDED_KEYS = frozenset({"result"})
 
-    这是覆盖关系的唯一投影源（只读计算，不写回任何产物）。覆盖真相只存在于
-    用例的 traceability 字段，risk-analysis 不存、报告不回填，避免双源同步。
+
+def _case_risk_ids(case: dict[str, Any]) -> list[str]:
+    """取出用例显式关联的风险 id。
+
+    主源是 `riskIds`（显式字段，见 references/test-case-schema.md）。另兼容历史数据：
+    早期用例把风险 id 写在 `traceability` 里——但该字段按 schema 还允许 requirement id /
+    代码路径 / API 路径，所以**只认符合风险 id 形态的条目**，其余一律不当作风险关联。
+
+    历史缺陷：这里曾把 traceability 的每一项都当风险号。使用者照 schema 写 API 路径，
+    投影结果为空，报告便输出「识别 N 条，已覆盖 0 条」——与事实完全相反，且长得很像真缺口。
+
+    注意别混淆：test-spec-tasks.json 也有个 `traceability`，那个的语义确实是
+    「关联的 risk ID 列表」（见 qa-test-script-generator/SKILL.md），两者不同名同义。
+    """
+    ids: list[str] = []
+    explicit = case.get("riskIds")
+    if isinstance(explicit, list):
+        for item in explicit:
+            value = str(item or "").strip()
+            if value:
+                _append_unique(ids, value)
+    trace = case.get("traceability")
+    if isinstance(trace, list):
+        for item in trace:
+            value = str(item or "").strip()
+            if value and _RISK_ID_RE.match(value):
+                _append_unique(ids, value)
+    return ids
+
+
+def project_risk_coverage(cases_data: dict[str, Any]) -> dict[str, list[str]]:
+    """从用例的风险关联反推「风险 → 覆盖它的用例」映射。
+
+    这是覆盖关系的唯一投影源（只读计算，不写回任何产物）。关联来源见 `_case_risk_ids`：
+    显式 `riskIds` 为主，兼容旧数据里形态正确的 `traceability` 条目。
     """
     cases = cases_data.get("cases", []) if isinstance(cases_data.get("cases"), list) else []
     coverage: dict[str, list[str]] = {}
@@ -8856,13 +8891,7 @@ def project_risk_coverage(cases_data: dict[str, Any]) -> dict[str, list[str]]:
         case_id = str(case.get("id", "") or "").strip()
         if not case_id:
             continue
-        trace = case.get("traceability") or []
-        if not isinstance(trace, list):
-            continue
-        for risk_id in trace:
-            risk_id = str(risk_id).strip()
-            if not risk_id:
-                continue
+        for risk_id in _case_risk_ids(case):
             coverage.setdefault(risk_id, []).append(case_id)
     # 去重，保持首次出现顺序
     return {risk_id: list(dict.fromkeys(ids)) for risk_id, ids in coverage.items()}
@@ -9533,6 +9562,58 @@ def _check_sc003_coverage(report_html: str, risk_data: dict, coverage_map: dict[
     return None
 
 
+def _risk_ids_mentioned_in_case(case: dict[str, Any]) -> set[str]:
+    """独立于投影，从用例原始字段文本里扫出所有形态正确的风险 id。"""
+    probe = {k: v for k, v in case.items() if k not in _RISK_SCAN_EXCLUDED_KEYS}
+    try:
+        text = json.dumps(probe, ensure_ascii=False)
+    except (TypeError, ValueError):
+        text = str(probe)
+    return set(_RISK_ID_TOKEN_RE.findall(text))
+
+
+def _check_sc007_projection_completeness(cases_data: dict, coverage_map: dict[str, list[str]]) -> dict | None:
+    """SC-007：投影完整性（独立于投影的原始扫描）。
+
+    SC-003 校验的是「渲染是否忠实于投影」，而两边同源于 `project_risk_coverage`——
+    投影本身误读时两边一起错、数值恒等，SC-003 必然通过。本检查用**独立的文本扫描**
+    取用例里实际出现的风险 id，与投影结果比对，专抓「投影漏读」。
+
+    历史缺陷：投影曾把 traceability 的每一项都当风险号，而该字段按 schema 还允许
+    代码路径 / API 路径。使用者照 schema 写 API 路径 → 投影全空 → 报告输出
+    「识别 7 条，已覆盖 0 条」，与事实相反，且长得像真实缺口，使用者会去补不存在的覆盖。
+    """
+    cases = cases_data.get("cases", []) if isinstance(cases_data.get("cases"), list) else []
+    missed: dict[str, list[str]] = {}
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        case_id = str(case.get("id", "") or "").strip() or "(无 id)"
+        linked = set(_case_risk_ids(case))
+        for risk_id in sorted(_risk_ids_mentioned_in_case(case) - linked):
+            missed.setdefault(risk_id, []).append(case_id)
+    if not missed:
+        return None
+    sample = ", ".join(sorted(missed)[:10])
+    return {
+        "id": "SC-007", "severity": "high", "category": "data-consistency",
+        "check": "风险关联投影完整性",
+        "summary": f"{len(missed)} 个风险 id 出现在用例里却未被投影关联（{sample}）",
+        "evidence": {
+            "expected": "用例里出现的风险 id 都应通过 riskIds 显式关联（或写成形态正确的 traceability 条目）",
+            "actual": f"未关联：{ {k: v[:3] for k, v in list(missed.items())[:5]} }",
+            "fields": [{"source": "test-cases.json", "path": "cases[].riskIds",
+                        "value": f"当前仅关联到 {sorted(coverage_map)[:10]}"}],
+        },
+        "fix": {
+            "file": "test-cases.json", "function": None, "line": None,
+            "root_cause": "用例提到了风险 id 但没写进 riskIds——覆盖投影读不到，报告会谎报该风险未被覆盖",
+            "change": "把该风险 id 补进对应用例的 riskIds；若只是行文提及、并非覆盖声明，删掉该提及",
+            "verify": "重跑 self-check，SC-007 消失且报告覆盖数上升",
+        },
+    }
+
+
 def _check_sc004_gate_verdict(report_html: str) -> dict | None:
     """SC-004：门禁 vs 结论。"""
     verdict_ready = ("可以合并（就绪）" in report_html) or ("可以合并（有条件就绪）" in report_html)
@@ -9820,6 +9901,7 @@ def qa_self_check(args: argparse.Namespace) -> None:
         _check_sc001_pass_rate(latest_run, report_html),
         _check_sc002_case_status(report_html, latest_run),
         _check_sc003_coverage(report_html, risk_data, coverage_map),
+        _check_sc007_projection_completeness(cases_data, coverage_map),
         _check_sc004_gate_verdict(report_html),
         _check_sc005_env_stats(report_html, env_checks),
         _check_sc006_unverified_cases(report_html, completion_data),

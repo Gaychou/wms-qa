@@ -58,9 +58,16 @@ Recommended fields:
 - `businessStateAfter`: expected business state after the operation.
 - `businessAssertions`: business assertions independent of the chosen test framework.
 - `risk`: business risk if uncovered.
+- `riskIds`: risk IDs this case covers, for example `["RISK-P0-001", "RISK-P1-003"]`.
+  This is the **only** source the coverage projection reads. A risk that is mentioned
+  anywhere in the case but not listed here does not count as covered — the report will
+  show it as a gap. Leaving this empty while the risk is genuinely covered produces a
+  report that contradicts reality.
 - `tags`: free-form tags such as `auth`, `payment`, `contract`, `playwright`.
 - `owner`: frontend, backend, fullstack, qa, or unknown.
-- `traceability`: requirement IDs, issue IDs, code paths, API paths.
+- `traceability`: requirement IDs, issue IDs, code paths, API paths. Mixed content is
+  allowed and is **not** read as risk links — an entry only counts as a risk link when it
+  matches the risk ID form (`RISK-<priority>-<number>`). Prefer `riskIds` for that.
 - `implementation`: files, commands, and assertions after implementation.
 - `result`: last execution result, log path, screenshots, trace, and error summary.
 
