@@ -790,6 +790,21 @@ def run_cmd(
             "stdout": completed.stdout[-20000:],
             "stderr": completed.stderr[-20000:],
         }
+    except FileNotFoundError as exc:
+        # 可执行文件不在 PATH。原先这里不捕获，直接抛裸 traceback
+        # （FileNotFoundError: [WinError 2] 系统找不到指定的文件），使用者看不出
+        # 缺的是哪个程序、该怎么装。
+        missing = exc.filename or (
+            command if isinstance(command, str) else (command[0] if command else "")
+        )
+        return {
+            "command": command if isinstance(command, str) else " ".join(command),
+            "cwd": str(cwd),
+            "exitCode": 127,
+            "durationSeconds": round(time.time() - start, 3),
+            "stdout": "",
+            "stderr": f"command not found: {missing}",
+        }
     except subprocess.TimeoutExpired as exc:
         return {
             "command": command if isinstance(command, str) else " ".join(command),
@@ -2271,6 +2286,21 @@ def build_scope_context(
 
 
 def search_module_matches(repo: Path, module: str) -> dict[str, Any]:
+    """用 ripgrep 按模块名抓代码位置。
+
+    ripgrep 是硬依赖，但缺失时原先只是抛裸 traceback，没有任何一句说「需要装 rg」。
+    另有一个更隐蔽的坑：Claude Code 环境下 `rg` 常是 **shell 函数**而非二进制
+    （`which rg` 找不到、`type -a rg` 显示 function），而 subprocess 不走 shell 函数——
+    「我以为装了 rg」完全不可靠。所以这里显式检查二进制是否存在。
+    """
+    if not shutil.which("rg"):
+        raise QaAgentError(
+            "未找到 ripgrep（rg）——收集上下文需要它来按模块名检索代码。\n"
+            "  安装：winget install BurntSushi.ripgrep.MSVC（Windows）"
+            "/ brew install ripgrep（macOS）/ apt install ripgrep（Debian/Ubuntu）\n"
+            "  注意：Claude Code 里的 `rg` 可能是 shell 函数，那种 `rg` subprocess 用不了，"
+            "必须是 PATH 里的真实二进制。"
+        )
     result = run_cmd(
         ["rg", "-n", "--glob", "!node_modules", "--glob", "!.git", "--glob", "!target", module],
         repo,
@@ -5028,14 +5058,25 @@ def synthesize_reviews(results: list[dict[str, Any]]) -> dict[str, Any]:
             }
         )
     accepted_candidates.sort(key=lambda item: (["P0", "P1", "P2", "P3"].index(item["maxSeverity"]), -item["count"]))
-    return {
+    models_succeeded = [result.get("model") for result in results if result.get("ok")]
+    review: dict[str, Any] = {
         "generatedAt": utc_now(),
+        # 全部模型失败时必须标 skipped。否则 findings: [] 有两种读法——「审过了，没问题」
+        # 和「根本没审」——而两者的产物长得一模一样。使用者实测时三个模型全失败，
+        # 产物照常写出，他差点按「已审查且干净」理解。
+        "status": "reviewed" if models_succeeded else "skipped",
         "modelsRequested": [result.get("model") for result in results],
-        "modelsSucceeded": [result.get("model") for result in results if result.get("ok")],
+        "modelsSucceeded": models_succeeded,
         "modelsFailed": failed,
         "findings": findings,
         "synthesis": accepted_candidates,
     }
+    if not models_succeeded:
+        review["note"] = (
+            "没有任何模型成功执行，本轮未做交叉审查——findings 为空不代表审查通过。"
+            "常见原因：未配置 QA_AGENT_LLM_API_KEY（该阶段本就是可选的增强，跳过不影响其余流程）。"
+        )
+    return review
 
 
 def review_cases(args: argparse.Namespace) -> None:
@@ -5600,6 +5641,40 @@ def self_invocation() -> str:
 def load_services_config(repo: Path) -> dict[str, Any]:
     """服务配置：local/services.local.json（私有）优先 → config/services.json（公有）兜底。"""
     return _load_layered_config(repo, "services")
+
+
+# 启动命令的首个 token → 它真正依赖的运行时检查名
+_RUNNER_RUNTIME = {
+    "mvn": "maven", "mvn.cmd": "maven", "mvnw": "maven", "mvnw.cmd": "maven",
+    "npm": "node", "npm.cmd": "node", "npx": "node", "npx.cmd": "node",
+    "node": "node", "node.exe": "node",
+    "yarn": "node", "yarn.cmd": "node", "pnpm": "node", "pnpm.cmd": "node",
+}
+
+
+def service_runtime_requirements(repo: Path) -> set[str]:
+    """从服务启动命令推导真正需要的运行时（"maven" / "node"）。
+
+    doctor 曾把 maven / node 一律标成可选（required=False），但 ``services.json`` 的
+    startCmd 就写着 `mvn spring-boot:run` / `npm run dev`——被标「可选」的 maven 缺失
+    会直接让后端服务起不来，doctor 却放行。必需性应当从实际依赖推导，不是静态清单。
+    """
+    needed: set[str] = set()
+    try:
+        services = load_services_config(repo).get("services", [])
+    except Exception:  # noqa: BLE001 - 配置读不出来不该让 doctor 自己崩掉
+        return needed
+    for service in services if isinstance(services, list) else []:
+        if not isinstance(service, dict):
+            continue
+        start_cmd = str(service.get("startCmd", "") or "").strip()
+        if not start_cmd:
+            continue
+        head = Path(start_cmd.split()[0]).name.lower()
+        runtime = _RUNNER_RUNTIME.get(head)
+        if runtime:
+            needed.add(runtime)
+    return needed
 
 
 def _load_layered_config(repo: Path, kind: str) -> dict[str, Any]:
@@ -6206,7 +6281,8 @@ def _derive_case_id(stem: str) -> str:
 
 
 def _record_run_sidecar(repo: Path, case_id: str, task_id: str, script_name: str,
-                        return_code: int, stdout: str, stderr: str) -> None:
+                        return_code: int, stdout: str, stderr: str,
+                        case_ids: list[str] | None = None) -> None:
     """写 runs/run-*.log + run-*.meta.json（聚合唯一事实源）。"""
     runs_dir = repo / ".qa-agent" / "runs"
     runs_dir.mkdir(parents=True, exist_ok=True)
@@ -6220,10 +6296,19 @@ def _record_run_sidecar(repo: Path, case_id: str, task_id: str, script_name: str
         f"=== STDOUT ===\n{stdout}\n\n=== STDERR ===\n{stderr}\n",
         encoding="utf-8"
     )
+    covered_ids = [case_id.upper()] if case_id else []
+    for extra in case_ids or []:
+        value = str(extra or "").strip().upper()
+        if value and value not in covered_ids:
+            covered_ids.append(value)
     sidecar = {
         "version": "1.0",
         "runId": str(epoch),
         "caseId": case_id.upper(),
+        # 一次执行可以覆盖多条用例（一个套件跑完十几条）。只写单值的话，其余用例会被
+        # evidence-integrity 门禁判成「缺少执行记录」，使用者只能把套件拆开逐条跑——
+        # 为了迎合门禁改变测试组织方式，方向是反的。
+        "caseIds": covered_ids,
         "taskId": task_id,
         "script": script_name,
         "logFile": log_path.name,
@@ -6304,12 +6389,18 @@ def run_with_env(args: argparse.Namespace) -> None:
     if result.stderr:
         print(result.stderr, file=sys.stderr)
 
-    # 从 script_stem 推导 case_id（显式参数优先），写 log + sidecar（聚合唯一事实源）
-    explicit_case_id = getattr(args, "case_id", None)
-    case_id = explicit_case_id.strip() if explicit_case_id else _derive_case_id(script_path.stem)
+    # case_id：显式 --case-id 优先，其次 --case-ids 的第一项，最后从脚本名推断
+    explicit_case_id = (getattr(args, "case_id", None) or "").strip()
+    declared_ids = [
+        part.strip().upper()
+        for part in str(getattr(args, "case_ids", "") or "").split(",")
+        if part.strip()
+    ]
+    case_id = explicit_case_id or (declared_ids[0] if declared_ids else "") or _derive_case_id(script_path.stem)
     _record_run_sidecar(
         repo, case_id, getattr(args, "task_id", None) or "",
         script_path.name, result.returncode, result.stdout, result.stderr,
+        case_ids=declared_ids,
     )
 
     if result.returncode != 0:
@@ -6593,9 +6684,36 @@ def doctor(args: argparse.Namespace) -> None:
     enc = encoding_health()
     add("utf8_output", bool(enc["ok"]), enc["detail"], required=False)
     add("git", command_exists("git"), shutil.which("git") or "not found")
+    # ripgrep 是 collect-context 的硬依赖，缺了会直接失败——之前 doctor 根本不检查它
+    add(
+        "ripgrep",
+        bool(shutil.which("rg")),
+        shutil.which("rg") or (
+            "未找到；collect-context --scope module 需要它。安装："
+            "winget install BurntSushi.ripgrep.MSVC（Windows）/ brew install ripgrep（macOS）"
+            "/ apt install ripgrep（Debian/Ubuntu）"
+        ),
+    )
+    # 服务启动命令真正用到哪个运行时，它就应当是必须项而不是可选项
+    runtime_needs = service_runtime_requirements(repo) if repo.exists() else set()
     add("java", command_exists("java"), command_version("java", ["-version"]), required=False)
-    add("maven", command_exists("mvn"), command_version("mvn", ["-version"]), required=False)
-    add("node", command_exists("node"), command_version("node", ["--version"]), required=False)
+    add(
+        "maven",
+        command_exists("mvn"),
+        command_version("mvn", ["-version"]) if command_exists("mvn")
+        else ("未找到；config/services.json 的启动命令依赖它" if "maven" in runtime_needs else "not found"),
+        required="maven" in runtime_needs,
+        next_action=(
+            "安装 Maven 或改掉 config/services.json 里的启动命令" if "maven" in runtime_needs else ""
+        ),
+    )
+    add(
+        "node",
+        command_exists("node"),
+        command_version("node", ["--version"]) if command_exists("node")
+        else ("未找到；config/services.json 的启动命令依赖它" if "node" in runtime_needs else "not found"),
+        required="node" in runtime_needs,
+    )
     add("npm", command_exists("npm"), command_version("npm", ["--version"]), required=False)
     add("npx", bool(find_npx()), find_npx() or "未找到；自动安装 Playwright Test Agents 需要 Node.js/npm", required=False)
     add("skill_dir", (ROOT / "SKILL.md").exists(), str(ROOT))
@@ -6845,7 +6963,7 @@ def doctor(args: argparse.Namespace) -> None:
             # 先探测
             for target in targets:
                 probe_url = target.get("healthUrl") or target["url"]
-                probe = probe_http_url(probe_url, timeout=getattr(args, "service_timeout", 5))
+                probe = probe_http_url_with_retry(probe_url, timeout=getattr(args, "service_timeout", 5))
                 target["ok"] = bool(probe.get("ok"))
                 target["detail"] = probe.get("detail")
                 target["status"] = probe.get("status")
@@ -7312,6 +7430,34 @@ def _server_signature(headers: Any) -> str:
         return ""
     parts = [p for p in (server, content_type) if p]
     return " / ".join(parts)
+
+
+def probe_http_url_with_retry(url: str, timeout: int = 5, attempts: int = 3,
+                              budget_seconds: float = 20.0) -> dict[str, Any]:
+    """带预热与重试的探活。
+
+    首次请求可能触发服务端按需编译（Next.js dev server 等），单次探测会把「正在编译」
+    误判成不可达。使用者实测到的就是：「doctor 报 timed out，同一个 URL 直接 curl 返回
+    200」，而 --strict 因此被阻断，得手动再跑一次才过。
+
+    第一次请求同时充当预热，失败后按递增间隔重试；整体受 budget_seconds 约束，
+    服务真的没起时也不会把 doctor 拖太久。
+    """
+    last: dict[str, Any] = {"url": url, "ok": False, "status": None, "detail": "not probed"}
+    deadline = time.time() + budget_seconds
+    tried = 0
+    for attempt in range(1, max(1, attempts) + 1):
+        tried = attempt
+        last = probe_http_url(url, timeout=timeout)
+        if last.get("ok"):
+            break
+        if attempt >= attempts or time.time() >= deadline:
+            break
+        time.sleep(min(1.0 * attempt, 2.0))
+    last["attempts"] = tried
+    if tried > 1 and not last.get("ok"):
+        last["detail"] = f"{last.get('detail')}（已重试 {tried} 次）"
+    return last
 
 
 def probe_http_url(url: str, timeout: int = 5) -> dict[str, Any]:
@@ -8355,6 +8501,15 @@ def _parse_run_sidecar(path: Path) -> dict[str, Any] | None:
     case_id = str(data.get("caseId", "") or "").upper()
     if not case_id:
         return None
+    case_ids: list[str] = []
+    raw_case_ids = data.get("caseIds")
+    if isinstance(raw_case_ids, list):
+        for item in raw_case_ids:
+            value = str(item or "").strip().upper()
+            if value and value not in case_ids:
+                case_ids.append(value)
+    if case_id not in case_ids:
+        case_ids.insert(0, case_id)
     try:
         epoch = int(data.get("runId", 0) or 0)
     except (TypeError, ValueError):
@@ -8375,6 +8530,7 @@ def _parse_run_sidecar(path: Path) -> dict[str, Any] | None:
         exit_code = 0
     return {
         "caseId": case_id,
+        "caseIds": case_ids,
         "taskId": str(data.get("taskId", "") or ""),
         "taskOrder": None,
         "scriptStem": stem,
@@ -9198,10 +9354,12 @@ def aggregate_runs(args: argparse.Namespace) -> None:
         else:
             parsed.append(entry)
 
-    # Group by caseId
+    # Group by caseId——一次执行可能覆盖多条用例，每条都要算进去，
+    # 否则套件里除首条以外的用例都会被判「没有执行记录」。
     grouped: dict[str, list[dict[str, Any]]] = {}
     for e in parsed:
-        grouped.setdefault(e["caseId"], []).append(e)
+        for covered in e.get("caseIds") or [e["caseId"]]:
+            grouped.setdefault(covered, []).append(e)
 
     cases: list[dict[str, Any]] = []
     total_rerun_overhead = 0
@@ -10768,6 +10926,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--script", required=True, help="测试脚本路径（相对于 --repo 或绝对路径）")
     p.add_argument("--extra", nargs="*", default=[], help="额外环境变量（VAR=value 格式）")
     p.add_argument("--case-id", help="用例 ID（如 TC-P0-001），写入 sidecar；缺省从脚本名推断")
+    p.add_argument("--case-ids", help="一次执行覆盖的多条用例 ID（逗号分隔）。一个套件跑多条用例时必填，否则只有首条会被算作有执行记录")
     p.add_argument("--task-id", help="spec-task ID（如 SPEC-TC-P0-001-API-001），写入 sidecar")
     p.add_argument("--dry-run", action="store_true", help="仅打印命令不执行")
     p.add_argument("--timeout", type=int, default=120, help="超时秒数")
