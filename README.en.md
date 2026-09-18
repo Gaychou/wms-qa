@@ -2,13 +2,11 @@
 
 [中文](README.md) | English
 
-An end-to-end QA acceptance orchestrator for coding agents. It walks a feature
-through context gathering, risk analysis, test-case design, script generation,
-execution, code review, and a final readiness verdict — pausing exactly once,
-for you to approve the test cases.
-
-Distributed as an **Agent Skill**, so it works with Claude Code, Codex, Cursor,
-and any other agent that reads the `SKILL.md` format.
+An end-to-end QA acceptance orchestrator for coding agents, distributed as an
+**Agent Skill**. Works with Claude Code, Codex, Cursor, and any other agent that
+reads the `SKILL.md` format. It walks a feature through context gathering, risk
+analysis, test-case design, script generation, execution, code review, and a
+final readiness verdict — **pausing exactly once**, for you to approve the cases.
 
 ```
 context → risk analysis → test case design → 【you confirm】 → scripts → run & repair → code review → report
@@ -17,11 +15,20 @@ context → risk analysis → test case design → 【you confirm】 → scripts
 ## Install
 
 ```bash
+# Cross-agent (recommended)
 npx skills add mingdui/ming-qa -g
+
+# Claude Code plugin marketplace
+/plugin marketplace add mingdui/ming-qa
+/plugin install ming-qa@ming-qa
+
+# From source (offline / custom location)
+git clone https://github.com/mingdui/ming-qa.git
+cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude-code
 ```
 
-The Claude Code plugin marketplace and a from-source install (offline / custom
-location) are also supported — see [installation docs](docs/installation.md).
+With `npx skills`, `-g` installs at user level for all projects; omit it to install
+into the current project. More in the [installation docs](docs/installation.md).
 
 ## Quick start
 

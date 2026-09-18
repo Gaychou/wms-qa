@@ -2,10 +2,9 @@
 
 中文文档 | [English](README.en.md)
 
-端到端 QA 验收工具包，以 **Agent Skill** 形式分发。把一次功能验收拆成固定阶段，
-从上下文收集一路推进到报告收口，**只在用例确认时停下等你审核**。
-
-支持 Claude Code、Codex、Cursor 及任何遵循 `SKILL.md` 规范的 agent。
+端到端 QA 验收工具包，以 **Agent Skill** 形式分发，支持 Claude Code、Codex、Cursor
+及任何遵循 `SKILL.md` 规范的 agent。把一次功能验收拆成固定阶段，
+**只在用例确认时停下等你审核**。
 
 ```
 上下文收集 → 风险分析 → 用例设计 → 【你来确认】 → 脚本生成 → 执行与修复 → 代码审查 → 报告
@@ -14,11 +13,20 @@
 ## 安装
 
 ```bash
+# 跨 agent（推荐）
 npx skills add mingdui/ming-qa -g
+
+# Claude Code 插件市场
+/plugin marketplace add mingdui/ming-qa
+/plugin install ming-qa@ming-qa
+
+# 从源码（离线 / 自定义安装位置）
+git clone https://github.com/mingdui/ming-qa.git
+cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude-code
 ```
 
-也支持 Claude Code 插件市场与源码安装（离线环境 / 自定义安装位置），
-见 [安装文档](docs/installation.md)。
+`npx skills` 的 `-g` 装到用户级目录对所有项目生效，省略则装到当前项目。
+更多说明见 [安装文档](docs/installation.md)。
 
 ## 快速上手
 
