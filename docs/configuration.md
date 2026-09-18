@@ -80,30 +80,22 @@ notify:
 
 **本工具不内置任何默认网关地址，也不会向任何默认地址发送请求。**
 
-未配置 `QA_AGENT_LLM_BASE_URL` 或 `llm.defaultBaseUrl` 时，多模型交叉审查阶段
-（`review-cases`）会**跳过**并写入「全部模型失败」结果，不会中断整个 QA 流程。
+填上你自己的 OpenAI 兼容网关地址后启用；留空则跳过该阶段，其余流程不受影响。
 
-网关需为 OpenAI 兼容的 chat completions 接口：`POST {base}/v1/chat/completions`，
-`Authorization: Bearer <key>`。base 的写法会被自动补全（以 `/v1` 结尾补
-`/chat/completions`；已是完整路径则原样使用）。
+**接口**：`POST {base}/v1/chat/completions`，`Authorization: Bearer <key>`。
+base 的写法会自动补全（以 `/v1` 结尾补 `/chat/completions`；已是完整路径则原样使用）。
 
-`llm.models` 是**任意字符串列表**，与你自己网关上的模型名一致即可——
-GPT / Claude / Gemini / DeepSeek / Qwen / 本地 vLLM / Ollama 等任何 OpenAI
-兼容端点都能接，不限定内置的三个。
+**模型**：`llm.models` 填你网关上的模型名即可，任何 OpenAI 兼容端点都能接
+（GPT / Claude / Gemini / DeepSeek / Qwen / 本地 vLLM / Ollama 等）。
 
 **优先级**：CLI 参数 > 配置文件 `llm` 段 > 内置默认值。
 
 ## 关于 `llm.stream`
 
-**默认 `true`。** 流式在这里是「超集」：SSE 聚合本就实现，非流式反而是需要额外
-分支的那条路；当下多数网关也默认或只支持流式。
+默认 `true`，即对所有模型走流式（SSE）。这是多数网关的推荐模式。
 
-- 默认对所有模型发 `stream: true`，不再按模型名猜
-- 端点确实不支持时，**自动降级重试一次非流式**——你不需要预先知道该配什么
-- 想强制关闭（例如排查报文），用 `--no-stream` 或写 `stream: false`
-
-> v2.x 之前靠一个硬编码的模型集合猜谁需要流式，换一个同样强制流式的网关就会撞 400，
-> 且用户无法自己打开。该硬编码已移除。
+若你的端点不支持流式，无需改动——工具会自动降级为非流式重试一次。
+要强制关闭，用 `--no-stream` 或在配置里写 `stream: false`。
 
 ## 关于 `notify.webhook`
 
