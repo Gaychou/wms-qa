@@ -91,6 +91,21 @@ description: >
 
 ### 前置准备（请求接收，不属于子 skill 阶段）
 
+**先看进度再开工**：跑 `python "$QA_AGENT_DIR/scripts/qa_agent.py" manifest --repo . --brief`，
+它会给出当前阶段、**每个产物是否真的落盘**、以及各状态键。`.qa-agent/current/` 下有二十来个
+json，原始 manifest 只列路径——判断「上一轮走到哪、缺什么」时先跑这个，比逐个 stat 快得多。
+
+**量级预期**：一个中等模块（十几条业务用例）走完整流程是小时级的，产物上百个。
+`generate-spec-tasks` 会按测试金字塔把每条用例展开成多个 task（P0 默认 8 个）。
+展开出来的 task 未实现只记 warn、不阻断门禁——**不必为了让计数好看去补低信息量的测试**；
+真正阻断的是「用例没有任何一条执行通过」（case-not-verified）。要收窄范围就用下面的开关，
+不要靠改 task 状态凑：
+
+- `--priorities P0,P1`：只执行高优先级，P2/P3 不纳入本轮
+- `--min-specs-by-priority P0=3,P1=2`：降低门禁对每条用例的展开数要求
+
+收窄了什么范围要如实写进报告，别让读者以为跑了全量。
+
 1. 明确 scope：用户提到了什么需求、模块、diff、branch、PR 还是业务流程。如果 scope 涉及真实本地 E2E（需前后端联调+浏览器操作），先读取 `references/real-local-e2e.md` 了解特殊流程。
 2. 如果 `.qa-agent/config`、`.qa-agent/cases`、`.qa-agent/local` 或 `.qa-agent/current` 目录不存在，先运行 `init-project`。
 3. 运行 `doctor --strict --check-services` 检查环境可达性。前后端服务不可达则先尝试启动（`--auto-start`）。必须修复项清零前不进入风险分析。

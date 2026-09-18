@@ -4560,6 +4560,27 @@ def assert_evidence_integrity(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+# 「流程没走完」（产物缺失、证据链断裂）与「走完但不达标」是两回事，最终档位由顶层
+# decision 一个字段给出。findings 只描述事实——原先每条 finding 各盖一个 decision 章，
+# 读起来 Incomplete 与 Not Ready 混排，要确定最终落哪一档还得回头查文档。
+_INCOMPLETE_FINDING_TYPES = frozenset({
+    "run-summary-empty",
+    "unmatched-run-logs",
+    "task-without-run-evidence",
+    "invalid-code-review-scope",
+    "invalid-case-file",
+    "invalid-task",
+    "invalid-tasks",
+    "invalid-task-layer",
+})
+
+
+def _is_incomplete_finding(finding: dict[str, Any]) -> bool:
+    """这条 finding 属于「缺东西」还是「东西在但不达标」。"""
+    ftype = str(finding.get("type", ""))
+    return ftype.endswith("missing") or ftype in _INCOMPLETE_FINDING_TYPES
+
+
 def assert_readiness_data(
     completion_data: dict[str, Any] | None,
     code_review_data: dict[str, Any] | None,
@@ -4575,11 +4596,11 @@ def assert_readiness_data(
     completion_status = normalize_task_status(completion_data.get("status"))
     completion_decision = normalize_task_status(completion_data.get("decision"))
     if not completion_data:
-        findings.append({"type": "completion-check-missing", "severity": "fail", "decision": "Incomplete"})
+        findings.append({"type": "completion-check-missing", "severity": "fail"})
     elif completion_status != "passed":
-        findings.append({"type": "completion-check-not-passed", "severity": "fail", "status": completion_status, "decision": completion_decision})
+        findings.append({"type": "completion-check-not-passed", "severity": "fail", "status": completion_status, "completionDecision": completion_decision})
     elif completion_decision in {"complete-not-ready", "complete_not_ready"}:
-        findings.append({"type": "completion-has-failed-business-task", "severity": "fail", "decision": "Not Ready"})
+        findings.append({"type": "completion-has-failed-business-task", "severity": "fail"})
     review_check = assert_code_review_data(code_review_data) if code_review_data else {
         "status": "failed",
         "summary": {"findings": 0, "blockingFindings": 1},
@@ -4587,13 +4608,11 @@ def assert_readiness_data(
     }
     if review_check.get("status") != "passed":
         for finding in review_check.get("findings", []):
-            item = dict(finding)
-            item.setdefault("decision", "Not Ready" if item.get("type") == "blocking-code-review-finding" else "Incomplete")
-            findings.append(item)
+            findings.append(dict(finding))
     freshness_status = normalize_task_status(report_freshness_data.get("status"))
     freshness_decision = normalize_task_status(report_freshness_data.get("decision"))
     if not report_freshness_data:
-        findings.append({"type": "report-freshness-missing", "severity": "fail", "decision": "Incomplete"})
+        findings.append({"type": "report-freshness-missing", "severity": "fail"})
     elif freshness_status != "passed":
         findings.append(
             {
@@ -4604,19 +4623,17 @@ def assert_readiness_data(
             }
         )
     if report_path and not report_path.exists():
-        findings.append({"type": "html-report-missing", "severity": "fail", "path": str(report_path), "decision": "Incomplete"})
+        findings.append({"type": "html-report-missing", "severity": "fail", "path": str(report_path)})
     # 证据完整性：执行证据链断裂 → Incomplete，不允许仅因报告新鲜就判可信
     evidence_integrity_data = evidence_integrity_data or {}
     evidence_status = normalize_task_status(evidence_integrity_data.get("status"))
     if not evidence_integrity_data:
-        findings.append({"type": "evidence-integrity-missing", "severity": "fail", "decision": "Incomplete"})
+        findings.append({"type": "evidence-integrity-missing", "severity": "fail"})
     elif evidence_status != "passed":
         for finding in evidence_integrity_data.get("findings", []):
-            item = dict(finding)
-            item.setdefault("decision", "Incomplete")
-            findings.append(item)
+            findings.append(dict(finding))
     blocking_code = any(item.get("type") == "blocking-code-review-finding" for item in findings)
-    incomplete = any(str(item.get("decision", "")).lower() == "incomplete" or str(item.get("type", "")).endswith("missing") for item in findings)
+    incomplete = any(_is_incomplete_finding(item) for item in findings)
     failed = any(item.get("severity") == "fail" for item in findings)
     if not failed:
         decision = "Conditionally Ready" if completion_decision in {"complete-with-allowed-gaps", "complete_with_allowed_gaps"} else "Ready"
@@ -6230,14 +6247,33 @@ def default_codex_skills_dir() -> Path:
 
 
 def cmd_manifest(args: argparse.Namespace) -> None:
-    """查看当前 QA 流程 manifest。"""
+    """查看当前 QA 流程 manifest。
+
+    `--brief` 给人类读的汇总：当前阶段、每个产物**是否真的落盘**、各状态键。
+    原始 JSON 只列路径，要判断「这个阶段到底完没完成」得自己逐个去 stat——
+    而 .qa-agent/current/ 下有二十来个 json，缺的正是这个总览。
+    """
     repo = Path(args.repo).resolve()
     manifest_file = repo / MANIFEST_PATH
     if not manifest_file.exists():
         print(f"manifest 不存在（{manifest_file}），先执行 QA 阶段命令生成")
         return
     data = json.loads(manifest_file.read_text(encoding="utf-8"))
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    if not getattr(args, "brief", False):
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return
+    print(f"当前阶段：{data.get('currentStage', '-')}")
+    artifacts = data.get("artifacts", {}) if isinstance(data.get("artifacts"), dict) else {}
+    if artifacts:
+        print("\n产物：")
+        for name, path in sorted(artifacts.items()):
+            mark = "✓" if (repo / str(path)).exists() else "✗"
+            print(f"  {mark} {name} — {path}")
+    status = data.get("status", {}) if isinstance(data.get("status"), dict) else {}
+    if status:
+        print("\n状态：")
+        for key, value in sorted(status.items()):
+            print(f"  {key}: {value}")
 
 
 # ---------------------------------------------------------------------------
@@ -7003,6 +7039,23 @@ def doctor(args: argparse.Namespace) -> None:
                         else ""
                     ),
                 )
+            # 服务「可达」不等于它依赖的中间件版本支持所需能力。不阻断，但要让人看见——
+            # 否则依赖该能力的断言（埋点、消息、队列）会整体不可信而无人察觉。
+            for name, lines in scan_service_logs_for_capability_errors(
+                repo, [str(t.get("name", "")) for t in targets]
+            ).items():
+                add(
+                    f"service:{name}:capability",
+                    False,
+                    f"日志中有 {len(lines)} 条中间件能力/版本错误，最近一条：{lines[-1][:140]}",
+                    category="services",
+                    required=False,
+                    next_action=(
+                        "服务能启动不代表中间件版本支持它用到的命令（例如 Redis Streams 需要 "
+                        "Redis ≥ 5.0）。依赖这类能力的断言整体不可信，请在报告里标注，"
+                        f"不要当通过。完整日志：.qa-agent/current/{name}.out.log"
+                    ),
+                )
     else:
         add("repo_exists", False, str(repo))
     api_key_present = bool(qa_env_value(repo, DEFAULT_API_KEY_ENV)) if repo.exists() else bool(os.environ.get(DEFAULT_API_KEY_ENV))
@@ -7458,6 +7511,47 @@ def probe_http_url_with_retry(url: str, timeout: int = 5, attempts: int = 3,
     if tried > 1 and not last.get("ok"):
         last["detail"] = f"{last.get('detail')}（已重试 {tried} 次）"
     return last
+
+
+# 中间件「版本能力不匹配」的典型日志签名：应用能起来，但持续刷这类错误。
+# 使用者实测踩到的正是这个——test 环境 Redis 4.0.8，而项目用 Redis Streams 做埋点
+# （XADD/XREADGROUP 需 Redis ≥ 5.0）。服务照常启动，doctor 只检查「可达」，一路绿灯，
+# 直到有人翻服务日志才发现埋点链路整体不可信。
+_MIDDLEWARE_CAPABILITY_PATTERNS = (
+    "unknown command",
+    "err unknown",
+    "unknown subcommand",
+    "is not supported in this version",
+    "wrong number of arguments for",
+)
+
+
+def scan_service_logs_for_capability_errors(repo: Path, services: list[str]) -> dict[str, list[str]]:
+    """扫服务日志找中间件能力不匹配的证据，返回 {服务名: [命中行]}。
+
+    零配置：服务日志本来就落在 .qa-agent/current/<name>.out.log。不去直连中间件探测版本，
+    因为那需要新增一套中间件配置面（主机/端口/口令），而项目用哪种中间件、跑在哪个版本，
+    只有应用自己知道。
+    """
+    hits: dict[str, list[str]] = {}
+    for name in services:
+        if not name:
+            continue
+        log_file = repo / ".qa-agent" / "current" / f"{name}.out.log"
+        if not log_file.exists():
+            continue
+        try:
+            text = log_file.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        matched = [
+            line.strip()[:200]
+            for line in text.splitlines()
+            if any(pattern in line.lower() for pattern in _MIDDLEWARE_CAPABILITY_PATTERNS)
+        ]
+        if matched:
+            hits[name] = matched[-5:]
+    return hits
 
 
 def probe_http_url(url: str, timeout: int = 5) -> dict[str, Any]:
@@ -10875,6 +10969,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--readiness-check", help="readiness-check.json from assert-readiness")
     p.add_argument("--output", default=".qa-agent/reports/latest-report.html")
     p.add_argument("--title")
+    # 归档副本功能（见 render_report 尾部的「方案 A」）一直没被接出来：
+    # 实现里用 getattr(args, "module"/"run_type") 取值，而这两个参数从未注册，
+    # 所以永远取到 None——文档里写的「渲染时通过 --module --run-type 自动生成归档副本」
+    # 实际不生效，使用者只能自己 cp。
+    p.add_argument("--module", help="模块名；与 --run-type 一起给出时额外输出归档副本 {module}-{runType}-{时间戳}.html")
+    p.add_argument("--run-type", dest="run_type", help="运行类型（如 acceptance / regression）")
     p.add_argument("--allow-mojibake", action="store_true", help="do not fail if rendered HTML contains known raw mojibake evidence")
     p.set_defaults(func=render_report)
 
@@ -10919,6 +11019,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("manifest", help="查看当前 QA 流程 manifest（上游产物路径和阶段状态）")
     p.add_argument("--repo", default=".")
+    p.add_argument("--brief", action="store_true", help="输出人类可读汇总：当前阶段、产物是否已落盘、状态键")
     p.set_defaults(func=cmd_manifest)
 
     p = sub.add_parser("run-with-env", help="分层加载环境变量（config/env.shared → local/.env）并执行测试脚本")
