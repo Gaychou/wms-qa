@@ -2,20 +2,20 @@
 
 ## 组成
 
-本工具由 1 个顶层路由器 + 7 个阶段子 skill + 1 个 Python CLI 构成。
+1 个顶层路由器 + 7 个阶段子 skill + 1 个 Python CLI。
 
-| # | Skill | 职责 | 是否判断质量 |
+| # | Skill | 职责 | 判断质量 |
 |---|---|---|---|
 | 0 | `quality-assurance-agent` | 路由器。按阶段调用子 skill，自己不写测试、不判质量 | — |
-| 1 | `qa-context-profiler` | 收集仓库事实与环境证据，不做任何判断 | 否 |
+| 1 | `qa-context-profiler` | 收集仓库事实与环境证据 | 否 |
 | 2 | `qa-risk-analyzer` | 识别高风险业务路径与必需验证点 | 否 |
 | 3 | `qa-testcase-designer` | 生成中文业务用例，等待用户确认 | 否 |
 | 4 | `qa-test-script-generator` | 把已确认用例转成 spec-task 与测试脚本 | 否 |
 | 5 | `qa-test-runner` | 执行、分类失败、修最小根因、跑 completion 门禁 | 否 |
 | 6 | `qa-code-reviewer` | 独立视角代码审查，产出 `code-review.json` | 是 |
-| 7 | `qa-report-generator` | 汇总三门禁产物，渲染报告，最终就绪判定 | 是 |
+| 7 | `qa-report-generator` | 汇总门禁产物，渲染报告，给出最终判定 | 是 |
 
-**只有阶段 6、7 判断质量。** 前五个阶段只负责收集、转换、执行，避免「自己判自己合格」。
+前五个阶段只做收集、转换、执行，质量判断集中在阶段 6、7。
 
 ## 执行链路
 
@@ -28,50 +28,32 @@
    ↓
 阶段 3 脚本生成
    ↓
-阶段 4 执行与修复（自动）
+阶段 4 执行与修复
    ↓
-阶段 5 代码审查（自动）
+阶段 5 代码审查
    ↓
-阶段 6 报告与最终判定（自动）
+阶段 6 报告与最终判定
 ```
 
-用例确认之后的所有阶段自动衔接，中间不需要人工介入。
+阶段 2 确认之后全部自动衔接，中间不需要人工介入。
 
-## 三个门禁
+## 门禁
 
-每一步切换前必须确认上游产物存在，产物缺失不允许跳过门禁。
+每次阶段切换前校验上游产物，缺失不允许跳过。
 
-| 门禁 | 产物 | 作用 |
+| 门禁 | 产物 | 校验内容 |
 |---|---|---|
 | completion | `completion-check.json` | 所有 task 是否执行完并通过 |
 | code-review | `code-review-check.json` | 是否存在 P0/P1 blocking 发现 |
 | readiness | `readiness-check.json` | 汇总前两者，给出最终判定 |
 
-最终就绪语言分四档：**就绪 / 有条件就绪 / 未就绪 / 未完成**。
+最终判定分四档：**就绪 / 有条件就绪 / 未就绪 / 未完成**。
 
-注意：completion 通过但 code-review 有 P1 blocking 时，判定为未就绪——
-不因为「用例都跑通了」就说 Ready。
-
-## CLI 调用约定
-
-`skills/quality-assurance-agent/scripts/qa_agent.py` 是命令语法的唯一真相来源。
-
-它**不作为 PATH 上的命令分发**——命令由 agent 执行，人不需要手敲。
-先解析一次 skill 目录，之后所有命令写成 `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
-
-```bash
-QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
-```
-
-运行环境若已告知 skill 目录（Claude Code 会），直接用，不必跑上面的查找。
-`$QA_AGENT_CLI` 优先级最高，供团队显式指定路径。
-
-这个约定让同一套文档在三种安装形态下都成立（`npx skills` 安装、
-插件市场安装、源码安装脚本），不需要为每种安装方式维护一套命令行写法。
+判定取 completion 与 code-review 的交集——两者都通过才是「就绪」。
 
 ## 产物目录
 
-运行产物都在目标项目的 `.qa-agent/` 下。
+运行产物在目标项目的 `.qa-agent/` 下。
 
 | 目录 | 内容 | git clone 后 |
 |---|---|---|
@@ -87,9 +69,16 @@ QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skill
 | `runs/` | 执行日志与证据 | ❌ |
 | `local/` | 本地账号密码 | ❌ |
 
-**git clone 后首次回归**：`current/` 丢失是正常的。先跑 `init-project` 建目录，
-再用 `generate-spec-tasks --acceptance-mode` 从 `cases/` 重新生成
-`test-spec-tasks.json`。测试脚本在 `tests/api/` 下，不受影响。
+**clone 后首次回归**：`current/` 已经不在了，先建目录再从 `cases/` 重新生成任务蓝图：
+
+```bash
+python "$QA_AGENT_DIR/scripts/qa_agent.py" init-project --repo .
+python "$QA_AGENT_DIR/scripts/qa_agent.py" generate-spec-tasks \
+  --cases .qa-agent/cases/<模块>.json --repo . \
+  --output .qa-agent/current/test-spec-tasks.json
+```
+
+`tests/api/` 下的测试脚本不受影响。
 
 ## 数据流向
 
@@ -121,19 +110,39 @@ QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skill
 
 ## 外部依赖与降级
 
-| 依赖 | 用途 | 不可用时的行为 |
+| 依赖 | 用途 | 不可用时 |
 |---|---|---|
-| Playwright 运行时 | 前端 E2E | 记录到 `environment-checks.json`，纯 API 验收可不需要 |
+| Playwright 运行时 | 前端 E2E | 记录到 `environment-checks.json`；纯 API 验收不需要 |
 | MySQL MCP | 数据库资金/状态校验 | 降级为 API 替代验证，在 evidence 中标注信息损失 |
-| LLM 网关 | 多模型交叉审查 | 跳过该阶段，写「全部模型失败」结果，不中断流程 |
-| webhook | 报告告警 | 未配置则完全不发；发送失败只写 stderr，不阻断 |
+| LLM 网关 | 多模型交叉审查 | 跳过该阶段，其余流程不受影响 |
+| 告警 webhook | 报告质量告警 | 不发送通知；发送失败只写 stderr，不阻断 |
 
-**本工具不内置任何默认外部服务地址。** 所有外部地址都必须由用户显式配置，
-未配置时不发起任何网络请求。
+所有外部地址都由用户显式配置，未配置时不发起网络请求。
 
-## 目录布局为什么是 `skills/`
+## CLI 调用约定
 
-8 个 skill 必须位于 `skills/` 这类容器目录下，`npx skills` 才能发现它们——
-该 CLI 扫描固定的容器目录名并向下走 3 层，仓库根目录只有直接含 `SKILL.md` 时才被接受。
+`skills/quality-assurance-agent/scripts/qa_agent.py` 是命令语法的唯一真相来源。
 
-因此仓库根 = 插件根，`skills/` 下平铺 8 个 skill 目录。
+先解析一次 skill 目录，之后所有命令写成 `python "$QA_AGENT_DIR/scripts/qa_agent.py" <cmd>`：
+
+```bash
+QA_AGENT_DIR="${QA_AGENT_CLI:-$(dirname "$(find ~/.claude/skills ~/.agents/skills ~/.codex/skills .claude/skills .agents/skills .codex/skills -maxdepth 2 -name SKILL.md -path '*quality-assurance-agent/*' 2>/dev/null | head -1)")}"
+```
+
+## 仓库布局
+
+```
+ming-qa/                            仓库根 = 插件根
+├── skills/
+│   ├── quality-assurance-agent/    主 skill + Python CLI
+│   ├── qa-context-profiler/
+│   ├── qa-risk-analyzer/
+│   ├── qa-testcase-designer/
+│   ├── qa-test-script-generator/
+│   ├── qa-test-runner/
+│   ├── qa-code-reviewer/
+│   └── qa-report-generator/
+└── docs/  .claude-plugin/  ...
+```
+
+仓库根同时是插件根。8 个 skill 平铺在 `skills/` 下——`npx skills` 扫描固定的容器目录名并向下查找，仓库根目录需要直接含 `SKILL.md` 才会被当作 skill。
