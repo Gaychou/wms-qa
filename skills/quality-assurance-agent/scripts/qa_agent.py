@@ -749,11 +749,25 @@ def enforce_no_mojibake(path: Path, allow_mojibake: bool = False) -> None:
         raise SystemExit("Rendered artifact contains mojibake; rewrite it as UTF-8 or pass --allow-mojibake only for known raw evidence.")
 
 
+def gate_env(repo: Path) -> dict[str, str]:
+    """跑配置里的命令时用的环境：进程环境 + 分层 .env。
+
+    与 `run-with-env` 对齐。历史上 `run-commands` / `run-gate` 不加载 `.qa-agent`
+    的 .env，依赖数据库凭证的门禁命令第一次跑必然失败（表现为 QA_MYSQL_USER 为空），
+    而且和 `run-with-env` 的行为不一致且无文档提示。
+    """
+    env = os.environ.copy()
+    env.update(_load_env(repo))
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
+
+
 def run_cmd(
     command: list[str] | str,
     cwd: Path,
     timeout: int = 120,
     shell: bool = False,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     start = time.time()
     try:
@@ -766,6 +780,7 @@ def run_cmd(
             errors="replace",
             capture_output=True,
             timeout=timeout,
+            env=env,
         )
         return {
             "command": command if isinstance(command, str) else " ".join(command),
@@ -5115,14 +5130,33 @@ def load_config(path: Path) -> dict[str, Any]:
         return parse_simple_yaml(text)
 
 
+def _is_quoted(value: str) -> bool:
+    """YAML 标量是否被成对引号包裹（单引号、双引号都算）。"""
+    return len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}
+
+
 def parse_scalar(value: str) -> Any:
+    """解析一个 YAML 标量。
+
+    历史缺陷：只剥双引号、不剥单引号。而 `yaml_quote()` 生成配置时用 json.dumps
+    产出双引号——生成端和解析端不对称，使用者手写 `'cd x && mvn test'` 时引号被
+    原样留下，传给 cmd.exe 就成了 `''cd' 不是内部或外部命令`。
+    单引号还会连带影响列表项判定（见 parse_simple_yaml 里对 `:` 的处理）。
+    """
     value = value.strip()
     if value in {"[]", ""}:
         return []
     if value in {"true", "false"}:
         return value == "true"
-    if value.startswith('"') and value.endswith('"'):
-        return value[1:-1]
+    if _is_quoted(value):
+        if value[0] == '"':
+            # yaml_quote() 用 json.dumps 生成，转义规则即 JSON 的
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value[1:-1]
+        # YAML 单引号：内部写 '' 表示一个字面单引号
+        return value[1:-1].replace("''", "'")
     if re.fullmatch(r"-?\d+", value):
         return int(value)
     return value
@@ -5153,7 +5187,7 @@ def parse_simple_yaml(text: str) -> dict[str, Any]:
                 if not item:
                     child, index = parse_block(index + 1, next_indent(index + 1, indent))
                     container.append(child)
-                elif ":" in item and not item.startswith('"'):
+                elif ":" in item and not _is_quoted(item):
                     key, value = item.split(":", 1)
                     obj: dict[str, Any] = {key.strip(): parse_scalar(value)}
                     index += 1
@@ -5898,8 +5932,9 @@ def run_commands(args: argparse.Namespace) -> None:
         "gate": args.gate,
         "commands": [],
     }
+    env = gate_env(repo)
     for command in commands:
-        result = run_cmd(command, repo, timeout=args.timeout, shell=True)
+        result = run_cmd(command, repo, timeout=args.timeout, shell=True, env=env)
         run["commands"].append(result)
         if result["exitCode"] != 0 and not args.continue_on_failure:
             break
@@ -5922,8 +5957,9 @@ def run_gate(repo: Path, gate: str, commands: list[str], timeout: int, continue_
         gate_run["reason"] = "no commands configured"
         return gate_run
     gate_run["status"] = "passed"
+    env = gate_env(repo)
     for command in commands:
-        result = run_cmd(command, repo, timeout=timeout, shell=True)
+        result = run_cmd(command, repo, timeout=timeout, shell=True, env=env)
         gate_run["commands"].append(result)
         if result["exitCode"] != 0:
             gate_run["status"] = "failed"
@@ -6200,42 +6236,67 @@ def _record_run_sidecar(repo: Path, case_id: str, task_id: str, script_name: str
     print(f"[ming-qa] 日志: {log_path}")
 
 
+def interpreter_argv_for_script(script_path: Path) -> list[str]:
+    """按扩展名选解释器。
+
+    历史缺陷：这里一律用 bash 执行，不看扩展名。`.py` 脚本因此被 bash 当 shell 解析，
+    报「import: command not found」「syntax error near unexpected token '('」——使用者
+    只能自己再写一层 `.sh` 包装来 exec python。
+
+    `.py` 用跑本 CLI 的那个解释器（`sys.executable`），而不是 PATH 里的 `python`：
+    后者在 Windows 上可能是 Microsoft Store 的占位程序（静默无输出）。
+    未知扩展名仍按 shell 脚本处理，保持既有行为。
+    """
+    suffix = script_path.suffix.lower()
+    if suffix == ".py":
+        return [sys.executable or "python", str(script_path)]
+    if suffix in {".js", ".mjs", ".cjs"}:
+        node = shutil.which("node")
+        if not node:
+            raise QaAgentError(f"{suffix} 脚本需要 Node.js，但 PATH 里找不到 node")
+        return [node, str(script_path)]
+    return [shutil.which("bash") or "bash", str(script_path)]
+
+
 def run_with_env(args: argparse.Namespace) -> None:
-    """分层加载 config/env.shared → local/.env → CRLF→LF → env 内联传递 → 执行脚本 → 记录日志。"""
+    """分层加载 config/env.shared → local/.env → CRLF→LF → 执行脚本 → 记录日志。
+
+    按扩展名选解释器，并以 argv 直接执行（不经 shell）。
+    """
     repo = Path(args.repo).resolve()
 
     env_vars = _load_env(repo)
 
-    # 构建 env VAR=value 列表
-    env_prefix: list[str] = []
-    for key, val in sorted(env_vars.items()):
-        env_prefix.append(f"{key}={val}")
+    # --extra 传入的额外变量（同名覆盖 .env）
+    extra_vars: dict[str, str] = {}
+    for item in getattr(args, "extra", None) or []:
+        key, sep, val = str(item).partition("=")
+        if sep:
+            extra_vars[key] = val
 
-    # 追加用户通过 --extra 传入的额外变量
-    if getattr(args, "extra", None):
-        for item in args.extra:
-            if "=" in item:
-                env_prefix.append(item)
-
-    # 构建完整命令
     script_path = Path(args.script)
     if not script_path.is_absolute():
         script_path = (repo / script_path).resolve()
     if not script_path.exists():
         raise QaAgentError(f"脚本不存在: {script_path}")
 
-    bash_cmd = "env " + " ".join(env_prefix) + " bash " + str(script_path)
+    argv = interpreter_argv_for_script(script_path)
+    total_vars = len(env_vars) + len(extra_vars)
     print(f"[run-with-env] {script_path.name}")
-    print(f"[run-with-env] 命令: env <{len(env_prefix)} vars> bash {script_path.name}")
+    print(f"[run-with-env] 命令: {Path(argv[0]).name} {script_path.name}（{total_vars} vars）")
     if getattr(args, "dry_run", False):
-        print(f"[run-with-env] DRY-RUN, 不执行")
+        print("[run-with-env] DRY-RUN, 不执行")
         return
 
-    # 执行并捕获输出（显式指定 UTF-8 避免 Windows GBK 默认编码导致的解码错误）
+    # 执行并捕获输出（显式指定 UTF-8 避免 Windows GBK 默认编码导致的解码错误）。
+    # 变量放进 env 而不是拼成 "env K=V …" 前缀再 shell=True：值里含空格或引号时
+    # 拼字符串会被 shell 拆错，配置派生的内容也会被 shell 解释。
     import subprocess as sp
     env_os = os.environ.copy()
+    env_os.update(env_vars)
+    env_os.update(extra_vars)
     env_os["PYTHONIOENCODING"] = "utf-8"
-    result = sp.run(bash_cmd, shell=True, cwd=str(repo), env=env_os,
+    result = sp.run(argv, cwd=str(repo), env=env_os,
                     capture_output=True, encoding="utf-8", errors="replace",
                     timeout=getattr(args, "timeout", 120))
     if result.stdout:
