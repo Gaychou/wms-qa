@@ -10,7 +10,7 @@
           missing_runs.append(case_id)
 
   而现实里一个 API 套件常常一次覆盖十几条用例。使用者把 15 条用例放在一个脚本里跑，
-  `run-with-env` 推断出的 sidecar caseId 是 `OPEN-BOX-API`——于是 17 个 task 全部报
+  `run-with-env` 推断出的 sidecar caseId 是 `SUITE-API`——于是 17 个 task 全部报
   「缺少执行记录」。
 
   他最后只能把套件拆开、逐条跑 15 次，E2E 也拆成两个 spec 文件分别跑，才让门禁通过。
@@ -68,14 +68,14 @@ def _tasks(*case_ids):
 
 def test_sidecar_records_every_covered_case_id(qa, tmp_path):
     qa._record_run_sidecar(
-        tmp_path, "OPEN-BOX-API", "", "suite.sh", 0, "ok", "",
+        tmp_path, "SUITE-API", "", "suite.sh", 0, "ok", "",
         case_ids=["TC-P0-001", "TC-P0-002"],
     )
 
     sidecar = next((tmp_path / ".qa-agent" / "runs").glob("*.meta.json"))
     data = json.loads(sidecar.read_text(encoding="utf-8"))
 
-    assert data["caseIds"] == ["OPEN-BOX-API", "TC-P0-001", "TC-P0-002"]
+    assert data["caseIds"] == ["SUITE-API", "TC-P0-001", "TC-P0-002"]
 
 
 def test_parser_exposes_case_ids(qa, tmp_path):
@@ -102,18 +102,18 @@ def test_legacy_sidecar_without_case_ids_still_parses(qa, tmp_path):
 
 def test_one_run_counts_for_every_covered_case(qa, tmp_path):
     runs = _runs_dir(tmp_path)
-    _write_sidecar(runs, case_id="OPEN-BOX-API", case_ids=["OPEN-BOX-API", "TC-P0-001", "TC-P0-002"])
+    _write_sidecar(runs, case_id="SUITE-API", case_ids=["SUITE-API", "TC-P0-001", "TC-P0-002"])
 
     data = _aggregate(qa, tmp_path)
 
-    assert {c["caseId"] for c in data["cases"]} == {"OPEN-BOX-API", "TC-P0-001", "TC-P0-002"}
+    assert {c["caseId"] for c in data["cases"]} == {"SUITE-API", "TC-P0-001", "TC-P0-002"}
     assert data["summary"]["totalCases"] == 3
 
 
 def test_end_to_end_multi_case_run_satisfies_evidence_gate(qa, tmp_path):
     """本次修复的核心：套件覆盖多条用例 → 门禁认它们都有执行记录。"""
     runs = _runs_dir(tmp_path)
-    _write_sidecar(runs, case_id="OPEN-BOX-API", case_ids=["OPEN-BOX-API", "TC-P0-001", "TC-P0-002"])
+    _write_sidecar(runs, case_id="SUITE-API", case_ids=["SUITE-API", "TC-P0-001", "TC-P0-002"])
     latest = _aggregate(qa, tmp_path)
 
     result = qa.check_evidence_integrity(
@@ -130,7 +130,7 @@ def test_end_to_end_multi_case_run_satisfies_evidence_gate(qa, tmp_path):
 def test_single_case_run_still_flags_other_cases(qa, tmp_path):
     """对照：不声明 caseIds 时，其余用例确实没有执行记录——修复前后的差别就在这里。"""
     runs = _runs_dir(tmp_path)
-    _write_sidecar(runs, case_id="OPEN-BOX-API", case_ids=None)
+    _write_sidecar(runs, case_id="SUITE-API", case_ids=None)
     latest = _aggregate(qa, tmp_path)
 
     result = qa.check_evidence_integrity(

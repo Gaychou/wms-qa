@@ -41,7 +41,7 @@ def test_explicit_risk_ids_are_projected(qa):
 def test_api_path_in_traceability_is_not_a_risk(qa):
     """本次修复的核心：API 路径不是风险号，不得进投影（旧逻辑会把它当风险）。"""
     coverage = qa.project_risk_coverage(
-        _cases({"id": "TC-P0-001", "traceability": ["POST /open-box/open-by-usd"]})
+        _cases({"id": "TC-P0-001", "traceability": ["POST /api/orders/place"]})
     )
 
     assert coverage == {}, f"API 路径被误当风险号：{coverage}"
@@ -86,7 +86,7 @@ def test_sc007_catches_the_reported_failure(qa):
         {
             "id": "TC-P0-001",
             "risk": "RISK-P0-001 资金重复发放",
-            "traceability": ["POST /open-box/open-by-usd"],
+            "traceability": ["POST /api/orders/place"],
         }
     )
     coverage_map = qa.project_risk_coverage(cases_data)
@@ -123,6 +123,6 @@ def test_sc007_ignores_risk_id_inside_result_evidence(qa):
 
 def test_sc007_silent_on_non_risk_traceability(qa):
     """traceability 里全是代码路径/API 路径、也确实没关联任何风险 → 不报。"""
-    cases_data = _cases({"id": "TC-P0-001", "traceability": ["POST /open-box/exchange", "src/Foo.java"]})
+    cases_data = _cases({"id": "TC-P0-001", "traceability": ["POST /api/orders/exchange", "src/Foo.java"]})
 
     assert qa._check_sc007_projection_completeness(cases_data, qa.project_risk_coverage(cases_data)) is None

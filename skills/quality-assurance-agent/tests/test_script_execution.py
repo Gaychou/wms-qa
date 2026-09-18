@@ -108,7 +108,7 @@ def test_quoted_command_with_colon_keeps_its_colon(qa):
 def _repo_with_env(tmp_path):
     shared = tmp_path / ".qa-agent" / "config" / "env.shared"
     shared.parent.mkdir(parents=True, exist_ok=True)
-    shared.write_text("QA_MYSQL_USER=shared_user\nQA_MYSQL_HOST=10.0.0.1\n", encoding="utf-8")
+    shared.write_text("QA_MYSQL_USER=shared_user\nQA_MYSQL_HOST=192.0.2.10\n", encoding="utf-8")
     local = tmp_path / ".qa-agent" / "local" / ".env"
     local.parent.mkdir(parents=True, exist_ok=True)
     local.write_text("QA_MYSQL_USER=local_user\n", encoding="utf-8")
@@ -124,7 +124,7 @@ def test_gate_env_loads_layered_env(qa, tmp_path, monkeypatch):
     env = qa.gate_env(repo)
 
     assert env["QA_MYSQL_USER"] == "local_user", "local/.env 应覆盖 env.shared"
-    assert env["QA_MYSQL_HOST"] == "10.0.0.1"
+    assert env["QA_MYSQL_HOST"] == "192.0.2.10"
 
 
 def test_gate_env_keeps_process_environment(qa, tmp_path):
@@ -167,7 +167,7 @@ def test_run_commands_passes_env_to_each_command(qa, tmp_path, monkeypatch):
     qa.run_commands(args)
 
     assert captured["env"]["QA_MYSQL_USER"] == "local_user"
-    assert captured["env"]["QA_MYSQL_HOST"] == "10.0.0.1"
+    assert captured["env"]["QA_MYSQL_HOST"] == "192.0.2.10"
 
 
 def test_run_gate_passes_env_to_each_command(qa, tmp_path, monkeypatch):

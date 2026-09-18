@@ -32,10 +32,10 @@ import json
 def test_render_report_accepts_module_and_run_type(qa):
     """参数必须真的注册了——之前是 unrecognized arguments，归档副本永远不生成。"""
     args = qa.build_parser().parse_args(
-        ["render-report", "--module", "open-box", "--run-type", "acceptance"]
+        ["render-report", "--module", "order", "--run-type", "acceptance"]
     )
 
-    assert args.module == "open-box"
+    assert args.module == "order"
     assert args.run_type == "acceptance"
 
 

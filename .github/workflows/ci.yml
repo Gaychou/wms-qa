@@ -113,7 +113,17 @@ jobs:
         run: |
           # 注意：不要把公开域名（如 qyapi.weixin.qq.com）加进哨兵列表——
           # 它是文档里合法使用的公开 webhook 地址，真正敏感的是 key。
-          SENTINELS='15993f30|algobuy|zhizhengroup|blindbox|blind_box|saas-blindbox|creative-content-bench|盲盒|开盒'
+          #
+          # 除内部项目名/业务词外，另两类也必须有，它们都曾真实漏过：
+          #   业务模块与 API 路径——从内部项目抄进测试示例时最容易带出来，而项目名
+          #   哨兵拦不住（open-box / open-by-usd 就是这么漏进回归测试注释的）。
+          #   私有网段 IP——内部主机地址贴进公开仓库就直接暴露内网拓扑。
+          #   本仓库自己的示例一律用 RFC 5737 文档网段（192.0.2.0/24 等），
+          #   所以这条 IP 规则不会误伤自家测试。
+          #   IP 段一律写成字符类 [.]，不要用反斜杠转义：模式要穿过一层 shell 再进
+          #   grep 的 argv，某些环境（Git Bash / MSYS）会把 argv 里的反斜杠吃掉，
+          #   于是 \. 退化成通配符，10:00:00 之类的文本会被误报成内网 IP。
+          SENTINELS='15993f30|algobuy|zhizhengroup|blindbox|blind_box|saas-blindbox|creative-content-bench|盲盒|开盒|open-box|open_by_usd|open-by-usd|192[.]168[.][0-9]+[.][0-9]+|10[.][0-9]+[.][0-9]+[.][0-9]+|172[.](1[6-9]|2[0-9]|3[01])[.][0-9]+[.][0-9]+'
           if grep -rniE "$SENTINELS" \
                --include='*.py' --include='*.md' --include='*.json' \
                --include='*.yaml' --include='*.yml' --include='*.sh' \

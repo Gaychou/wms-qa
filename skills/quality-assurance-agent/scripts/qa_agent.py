@@ -3120,7 +3120,7 @@ def oracle_for_spec_task(case: dict[str, Any], layer: str, focus_kind: str) -> d
     # 风险关联只能取自用例显式声明的风险 id。
     # 历史缺陷：这里曾取 traceability[0]，而该字段按 schema 还允许 requirement id /
     # 代码路径 / API 路径（见 references/test-case-schema.md）。使用者照 schema 写
-    # API 路径时，oracle 的 sourceRiskId 就被写成 "POST /open-box/open-by-usd"，
+    # API 路径时，oracle 的 sourceRiskId 就被写成 "POST /api/orders/place"，
     # 风险映射门禁因此恒判「P0/P1 风险未被覆盖」——误报，且逼人去补不存在的覆盖。
     case_risk_ids = _case_risk_ids(case)
     source_risk_id = case_risk_ids[0] if case_risk_ids else ""

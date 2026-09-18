@@ -11,7 +11,7 @@
   而 `test-cases.json` 的 `traceability` 按 schema（references/test-case-schema.md）
   是混合内容——requirement id / issue id / 代码路径 / API 路径都允许。使用者照
   schema 写 API 路径时，oracle 各项的 `sourceRiskId` 就被写成
-  `"POST /open-box/open-by-usd"`，于是：
+  `"POST /api/orders/place"`，于是：
 
       Oracle mapping gate FAILED: 6 P0/P1 risks not covered
 
@@ -28,14 +28,14 @@ traceability 条目）；同时让 `build_spec_task` 把用例的全部风险 id
 
 from __future__ import annotations
 
-API_PATH = "POST /open-box/open-by-usd"
+API_PATH = "POST /api/orders/place"
 
 
 def _case(**extra):
     case = {
         "id": "TC-P0-001",
         "priority": "P0",
-        "title": "USD 开盒扣款",
+        "title": "USD 下单扣款",
         "businessAssertions": ["接口返回 code=200", "数据库余额扣减与商品单价一致"],
     }
     case.update(extra)

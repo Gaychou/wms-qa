@@ -25,13 +25,13 @@ def _write_case(tmp_path: Path, case_id: str, layer: str) -> Path:
             {
                 "id": case_id,
                 "title": "示例业务用例",
-                "module": "open-box",
+                "module": "order",
                 "type": "functional",
                 "priority": "P1",
                 "layer": layer,
                 "automation": "automated",
                 "status": "confirmed",
-                "source": ["cases/open-box.json"],
+                "source": ["cases/order.json"],
                 "operationPath": "用户操作路径",
                 "expected": ["期望结果"],
             }
