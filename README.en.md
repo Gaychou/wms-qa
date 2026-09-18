@@ -16,7 +16,7 @@ context → risk analysis → test case design → 【you confirm】 → scripts
 
 ```bash
 # Cross-agent (recommended): installs once, links into every detected agent
-npx skills add mingdui/ming-qa -g -y
+npx -y skills add mingdui/ming-qa -g -y
 
 # Claude Code plugin marketplace
 /plugin marketplace add mingdui/ming-qa
@@ -28,7 +28,10 @@ cd ming-qa/skills/quality-assurance-agent && ./install.sh --target claude-code
 ```
 
 `-g` installs at user level for all projects (omit it for the current project only);
-`-y` installs all 8 skills in one go. More in the [installation docs](docs/installation.md).
+`-y` installs all 8 skills in one go. The leading `npx -y` skips npx's own
+"install the skills package?" prompt — the two `-y` flags are not the same thing,
+and without the first one the initial install stops at an interactive prompt.
+More in the [installation docs](docs/installation.md).
 
 ## Quick start
 

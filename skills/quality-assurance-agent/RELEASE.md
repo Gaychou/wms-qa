@@ -5,7 +5,7 @@
 ## 分发架构
 
 - **唯一代码源**：GitHub 仓库 [mingdui/ming-qa](https://github.com/mingdui/ming-qa)。
-- **渠道一（推荐）**：`npx skills add mingdui/ming-qa -g`
+- **渠道一（推荐）**：`npx -y skills add mingdui/ming-qa -g`
 - **渠道二**：Claude Code 官方插件市场 `/plugin marketplace add mingdui/ming-qa`
 - **渠道三**：从源码运行 `install.sh` / `install.ps1`（离线环境 / 自定义安装位置）
 
@@ -13,7 +13,7 @@
 
 ```bash
 # npx skills 渠道：按项目更新（技能名不是仓库名，传 ming-qa 会找不到）
-npx skills update
+npx -y skills update
 # 或
 /plugin update ming-qa@ming-qa
 ```
@@ -64,7 +64,7 @@ gh release create v2.0.0 --generate-notes
 ### 5. 验证安装渠道
 
 ```bash
-npx skills add mingdui/ming-qa --list          # 应列出 8 个 skill
+npx -y skills add mingdui/ming-qa --list       # 应列出 8 个 skill
 claude plugin validate .                        # 应通过
 python skills/quality-assurance-agent/scripts/qa_agent.py --version   # 应输出 SKILL_VERSION
 ```

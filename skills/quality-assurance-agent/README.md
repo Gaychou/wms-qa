@@ -12,7 +12,7 @@
 请从仓库根目录的 [README](../../README.md) 开始。
 
 ```bash
-npx skills add mingdui/ming-qa -g
+npx -y skills add mingdui/ming-qa -g
 # 或
 /plugin marketplace add mingdui/ming-qa
 ```
