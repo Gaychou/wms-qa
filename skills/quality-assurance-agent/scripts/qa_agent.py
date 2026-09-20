@@ -4162,6 +4162,55 @@ def has_meaningful_evidence(task: dict[str, Any]) -> bool:
     return not any(hint in text for hint in _MANUAL_VERIFY_HINTS)
 
 
+def task_execution_mode(task: dict[str, Any]) -> str:
+    """Best-effort extraction of the execution evidence mode.
+
+    Older task files may not have this field, so absence remains backward-compatible.
+    When a mode is explicitly present, completion must respect it.
+    """
+    candidates: list[Any] = [
+        task.get("executionMode"),
+        task.get("execution_mode"),
+    ]
+    result = task.get("result")
+    if isinstance(result, dict):
+        candidates.extend([result.get("executionMode"), result.get("execution_mode")])
+    evidence = task.get("evidence")
+    if isinstance(evidence, dict):
+        candidates.extend([evidence.get("executionMode"), evidence.get("execution_mode")])
+    elif isinstance(evidence, list):
+        for item in evidence:
+            if isinstance(item, dict):
+                candidates.extend([item.get("executionMode"), item.get("execution_mode")])
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def task_has_real_execution(task: dict[str, Any]) -> bool:
+    """Reject explicit static/simulation/uncovered evidence from satisfying completion.
+
+    Missing executionMode is kept compatible with historical real test tasks. Once a
+    task declares its mode, clearly non-runtime modes cannot be counted as verified.
+    """
+    mode = task_execution_mode(task).strip().lower().replace("-", "_").replace(" ", "_")
+    if not mode:
+        return True
+    non_real_prefixes = (
+        "simulation",
+        "static",
+        "uncovered",
+        "not_covered",
+        "code_review",
+        "source_review",
+        "logic_simulation",
+        "algorithm_simulation",
+    )
+    return not mode.startswith(non_real_prefixes)
+
+
 def has_required_task_mapping(task: dict[str, Any]) -> bool:
     return all(
         meaningful_value(task.get(key))
@@ -4430,7 +4479,9 @@ def assert_completion_data(
         # 用例层 verified 闸门：至少一个 task 真实执行通过（passed + 有执行证据），否则该用例业务未被验证。
         # 全部 blocked / 未实现 / 未执行 = 未验证，门禁必须 fail，不允许 complete_with_allowed_gaps。
         verified = any(
-            normalize_task_status(t.get("executionStatus")) == "passed" and has_meaningful_evidence(t)
+            normalize_task_status(t.get("executionStatus")) == "passed"
+            and has_meaningful_evidence(t)
+            and task_has_real_execution(t)
             for t in case_tasks
         )
         if not verified:
@@ -4441,7 +4492,7 @@ def assert_completion_data(
                     "sourceCaseId": case_id,
                     "priority": priority,
                     "title": case.get("title"),
-                    "message": "该用例没有任何 task 真实执行通过（全部 blocked/未实现/未执行），业务未被验证",
+                    "message": "该用例没有任何 task 具备真实执行通过证据；static/simulation/uncovered 不能满足 verified 门禁",
                 }
             )
 
@@ -4456,6 +4507,7 @@ def assert_completion_data(
         "failed": 0,
         "unimplemented": 0,
         "unexecuted": 0,
+        "nonRealPassed": 0,
     }
     for task in tasks:
         if not isinstance(task, dict):
@@ -4504,7 +4556,17 @@ def assert_completion_data(
             continue
 
         if execution_status == "passed":
-            counters["executed"] += 1
+            if task_has_real_execution(task):
+                counters["executed"] += 1
+            else:
+                counters["nonRealPassed"] += 1
+                findings.append({
+                    "type": "passed-task-non-real-execution",
+                    "severity": "fail",
+                    "executionMode": task_execution_mode(task),
+                    "message": "static/simulation/uncovered 证据不能把业务 task 标记为 passed",
+                    **status_pair,
+                })
             if not has_required_task_mapping(task):
                 findings.append({"type": "passed-task-missing-mapping", "severity": "fail", **status_pair})
             if not has_meaningful_evidence(task):
