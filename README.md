@@ -69,7 +69,8 @@ agent 会自动初始化项目、体检环境、按验收范围装好需要的�
 | `.qa-agent/current/` | 本轮运行产物 | ❌ 需重新生成 |
 | `.qa-agent/runs/` | 执行日志与证据 | ❌ |
 | `.qa-agent/local/` | 本地账号密码 | ❌ |
-| `tests/api/<模块>/` | 测试脚本 | ✅ |
+| `tests/api/<模块>/` | API 测试脚本（bash / PowerShell） | ✅ |
+| `tests/dotnet/` | .NET / .NET Framework 测试项目与用例 | ✅ |
 
 ## 数据与外发
 
@@ -84,7 +85,7 @@ agent 会自动初始化项目、体检环境、按验收范围装好需要的�
 
 - Python 3.9+（仅用标准库，无第三方运行时依赖）
 - Git
-- 目标项目按验收范围需要 Java 21 / Maven 或 Node.js 20+
+- 目标项目按验收范围需要 Java 21 / Maven、Node.js 20+，或 .NET SDK；经典 .NET Framework 项目需 Windows + Visual Studio Build Tools/MSBuild
 
 ## 遇到问题
 

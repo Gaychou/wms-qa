@@ -44,18 +44,33 @@ description: >
 
 按 spec-task 的顺序执行，但要注意**数据依赖**——有些用例会互相干扰：
 - 需要余额充足的用例先跑
-- 需要余额不足的用例可以临时下调余额（通过 MySQL MCP UPDATE），跑完立刻还原并核实
+- 需要余额不足的用例可以通过当前数据库适配器临时下调余额，跑完立刻还原并核实
 - 需要已使用资产的用例可以复用前置正向用例消耗后的资产
 - 需要过期资产或不可购买商品的用例临时修改数据字段，跑完立即还原
 
 ### 2. 执行方式
 
-- api 层 bash 脚本：`python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env --repo . --script <script-path> --extra KEY=VAL...`
-- 需要数据库验证的 integration 层：先读取 `$QA_AGENT_DIR/references/mysql-mcp-integration.md` 了解查库方法，跑脚本后**按 `oracle.db` 结构化逐条校验**，记录「查询摘要 + 期望 + 实际 + 状态」到 evidence
-- `verificationMode: direct-db` 的数据完整性 task：直接通过 MySQL MCP `read_query` 执行 `oracle.db[].query`，逐条断言，不允许降级为「手工核对通过」
+#### 执行路径真实性分级（必须先判定）
+
+每个 task 在执行前必须标明证据来源，禁止把“模拟生产代码逻辑”冒充真实产品执行：
+
+- **real-product-path**：实际执行被测产品代码/二进制，并经过该用例要求的真实运行链路。例如 WinForms 原方法 → WCF → SQL Server → GemBox → 真实导出文件。
+- **partial-product-path**：实际执行了部分产品链路，但跳过了某一层。例如直接调用 WCF 而未经过 WinForms UI。只能验证被实际覆盖的层。
+- **simulation**：测试脚本根据源码在 Python/PowerShell/自建 DataTable/openpyxl 等环境中重新实现算法或数据流。只能作为静态分析的增强证据，不能把原 integration/e2e task 标记 passed/failed，也不能把模拟生成的文件称为“真实导出文件”。
+- **static-analysis**：只读源码/SQL/配置推断。只能形成风险或待验证缺陷。
+
+如果原 task 要求验证 WinForms/WCF/GemBox 等真实产品路径，而当前环境无法触发该路径：
+1. 将原 task 标记为 `blocked`，写明缺失的真实触发能力；
+2. 可另外执行 simulation 作为 supplementary evidence；
+3. simulation 发现的问题状态写成“高度可信待真实路径复现”，不得作为真实产品执行的 PASSED/FAILED；
+4. 不允许通过重写生产算法来“制造”期望的失败文件，再把该文件作为产品缺陷的执行证据。
+
+- api 层 bash/PowerShell 脚本：`python "$QA_AGENT_DIR/scripts/qa_agent.py"run-with-env --repo . --script <script-path> --extra KEY=VAL...`
+- 需要数据库验证的 integration 层：先识别数据库；MySQL 读取 `$QA_AGENT_DIR/references/mysql-mcp-integration.md`，SQL Server 读取 `$QA_AGENT_DIR/references/sqlserver-integration.md`。跑脚本后**按 `oracle.db` 结构化逐条校验**，记录「查询摘要 + 期望 + 实际 + 状态」到 evidence
+- `verificationMode: direct-db` 的数据完整性 task：通过当前数据库适配器执行 `oracle.db[].query`，逐条断言，不允许降级为「手工核对通过」
 - e2e 层：先读取 `$QA_AGENT_DIR/references/playwright-agent-integration.md` 了解 Playwright 规划器/生成器/修复器流程，通过 Playwright MCP 真实浏览器操作（navigate → login → click → snapshot → network_requests）
 
-**E2E 障碍处理、执行路径、环境变量、MySQL MCP 降级**：详见 `references/e2e-troubleshooting.md`。
+**E2E 障碍处理、执行路径、环境变量、数据库适配器降级**：详见 `references/e2e-troubleshooting.md`。
 
 **MCP 数据准备（PRE/POST 模式）及风险分级**：详见 `references/data-prep-patterns.md`。
 
@@ -104,7 +119,7 @@ description: >
 数据准备和还原的完整规范（PRE/POST 模式、风险分级、兜底机制）见 `references/data-prep-patterns.md`。
 
 核心原则：每条 task 优先使用 PRE/POST 自声明，task 执行完立刻还原。统一还原为兜底。
-核实方式：MySQL MCP `read_query` 或后端 API 降级。
+核实方式：当前数据库适配器查询或后端 API 降级。
 
 ### 7. 跑 completion 门禁
 
@@ -132,7 +147,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"save-knowledge --repo . --module <mod
 
 **应该记录的**：
 - API 响应格式的特殊约定（如 null 值字段被省略、业务错误码在响应体而非 HTTP 状态码）
-- 环境特性（如 Redis 缓存 TTL、Maven 启动参数、MySQL MCP 连接断开后的降级方案）
+- 环境特性（如 Redis 缓存 TTL、.NET/MSBuild/Maven 启动参数、数据库适配器连接断开后的降级方案）
 - 测试数据构造技巧（如通过 MCP 改库后需调 API 刷新缓存、已过期资产如何构造）
 - 前端防御机制（如 getAssetDetail 预检、弹窗遮挡的处理方式）
 
@@ -151,7 +166,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"save-knowledge --repo . --module <mod
 
 ## 容错与降级
 
-本技能的核心容错逻辑已内嵌在工作流各步骤中（失败三分类、5 次修复迭代、PRE/POST 数据还原、E2E 障碍处理、MySQL MCP 降级）。新增异常场景按以下原则处理：
+本技能的核心容错逻辑已内嵌在工作流各步骤中（失败三分类、5 次修复迭代、PRE/POST 数据还原、E2E 障碍处理、数据库适配器降级）。新增异常场景按以下原则处理：
 
 - **未分类失败**：先套用三分类框架（测试bug/产品缺陷/环境问题/基础设施bug/需求歧义），无法归类 → blocker
 - **MCP 全部不可用**：所有 task 标记 blocked，不降级为"手动验证通过"
@@ -163,6 +178,7 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"save-knowledge --repo . --module <mod
 - **不把 passed 的 gate 当作"所有业务用例自动通过"**。gate 只是流程证据。
 - **不给没有映射和证据的 task 标记 passed**。每条 passed task 必须有 targetFile/testName/command 和非空 evidence。
 - **passed 的 evidence 必须是真实执行输出**（含断言 PASS/FAIL 行），**禁止用「手动验证/手动核对」冒充真实执行**——「手动 MCP 核对通过」不算 passed。
+- **真实执行必须来自被测产品路径**：Python/openpyxl/PowerShell 等脚本若只是按源码重新实现 C#/WCF/GemBox 逻辑，属于 simulation，不能据此把产品 integration/e2e task 标记 passed/failed；只能作为补充证据，并必须明确标注 `executionMode: simulation`。
 - **blocked 必须先做数据侦察再标**：数据类阻塞（缺数据/账号/资产/余额/跨日）必须先跑 `SELECT` 侦察，把侦察结果（查询 + 实际返回行数）写进 blocker；没侦察过就标 blocked 是偷懒，`assert-completion` 会判 `blocked-task-missing-evidence`。
 - **一个用例必须至少一个 task 真实执行通过才算 verified**。全部 task 都 blocked/未实现的用例 = 未验证，`assert-completion` 会判 `case-not-verified`（fail），不允许 `complete_with_allowed_gaps`。
 - **不用 --allow-blocked / --allow-deferred / --allow-skipped 除非每条受影响的 task 有 blocker/证据-或-备注/owner/nextAction**。

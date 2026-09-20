@@ -66,10 +66,18 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-script-implementation --spec-t
 
 ### 4. 实现测试文件
 
+#### 禁止用“重写生产逻辑”替代真实集成路径
+
+脚本生成时先判断用例真正要验证哪一条产品链路。若用例目标是 WinForms 导出、WCF 调用、GemBox 文件生成等运行时行为：
+
+- 优先生成能触发**真实产品代码/二进制**的测试方式（测试宿主、反射/公开入口、现有客户端自动化、真实 WCF 调用等）。
+- 如果当前环境无法触发真实路径，将该 task 的 `implementationStatus` 保持为 `not-implemented` 或记录 blocker；不要写一个 Python/openpyxl 脚本去复制 C# SQL/DataTable/GemBox 逻辑后宣称“已实现 integration 测试”。
+- 允许额外生成 simulation 脚本用于验证源码推断，但必须作为独立的辅助 task，并在名称/evidence 中明确标注 `simulation`；它不能替代原 integration/e2e task，也不能满足真实路径 completion 要求。
+
 按照 spec-task 逐条实现测试脚本：
 
-- **api 层 task**：bash 脚本（curl + python3 解析 JSON 断言）或 JUnit 集成测试类，直接调后端 API
-- **integration 层 task**：需要查库验证的，脚本 + MySQL MCP `read_query` 结合
+- **api 层 task**：bash/PowerShell 脚本（curl/Invoke-RestMethod + JSON 断言）、JUnit 或 .NET 测试，直接调后端 API
+- **integration 层 task**：需要查库验证的，按数据库适配器执行；SQL Server 读取 `$QA_AGENT_DIR/references/sqlserver-integration.md`
 - **e2e 层 task**：spec 文件路径为 `tests/e2e/<module>/<case-id>.spec.ts`（`@playwright/test` 格式），执行命令为 `npx playwright test <targetFile>`。spec 文件内容由 Playwright Test Agent（planner → generator）生成或手写。团队共享的 fixture 在 `tests/e2e/lib/e2e-fixture.js`（`init-project` 自动部署），提供 `loginAsQA()` 等可复用操作
 - **复用已有测试**：精确映射 targetFile/testName/command/assertions/oracle/evidence 到 spec-task
 
@@ -146,7 +154,7 @@ E2E fixture（`tests/e2e/lib/e2e-fixture.js`）由 `init-project` 首次部署�
 
 ## DB 断言固化与 MCP 数据准备规范
 
-DB 断言不得「外包」给执行 runner 手工核对——必须固化为可执行的结构化校验。bash 脚本无法直接调用 MySQL MCP（MCP 是 Claude 的工具而非 shell 命令），因此分两类：
+DB 断言不得「外包」给执行 runner 手工核对——必须固化为可执行的结构化校验。不要假设固定数据库产品：MySQL 可用 MCP；SQL Server 优先使用已连接工具，否则使用 `$QA_AGENT_DIR/scripts/sqlserver_query.ps1`。因此分两类：
 
 ### 数据完整性用例（direct-db）
 
@@ -176,9 +184,9 @@ DB 断言不得「外包」给执行 runner 手工核对——必须固化为可
 ```bash
 #!/usr/bin/env bash
 # Test: TC-P2-032 - Exchange软删除
-# MCP 数据准备（执行 runner 在脚本前后完成）：
-#   PRE:  mcp__mysql_mcp__write_query "UPDATE t_user_open_record SET is_deleted=1 WHERE id=<PENDING_ID>"
-#   POST: mcp__mysql_mcp__write_query "UPDATE t_user_open_record SET is_deleted=0 WHERE id=<SAME_ID>"
+# DB 数据准备（执行 runner 在脚本前后完成）：
+#   PRE:  通过当前数据库适配器执行受控 UPDATE
+#   POST: 使用同一适配器恢复 PRE 前保存的原值
 set -u
 # ... login, API call, assertions ...
 ```
@@ -194,8 +202,8 @@ exit 0  # ← 永远禁止！这是在伪造"执行过"
 ### 执行 runner 的职责
 
 `qa-test-runner` 遇到 `verificationMode: direct-db` 的 task 或标注 `PRE:`/`POST:` 的脚本时：
-1. 通过 MySQL MCP 执行 PRE 数据准备
+1. 通过当前数据库适配器执行 PRE 数据准备（SQL Server 写操作必须显式开启）
 2. 运行脚本（API 调用 + 断言）
-3. 通过 MCP 执行 `oracle.db` 逐条校验，记录「查询摘要 + 期望 + 实际 + 状态」到 evidence
-4. 通过 MCP 执行 POST 数据还原
-5. 所有 MCP 操作失败也记录在 evidence 中；oracle.db 为空视为 spec-task 未完成，不得进入执行阶段
+3. 通过当前数据库适配器执行 `oracle.db` 逐条校验，记录「查询摘要 + 期望 + 实际 + 状态」到 evidence
+4. 通过同一适配器执行 POST 数据还原
+5. DB 操作失败也记录在 evidence 中；oracle.db 为空视为 spec-task 未完成，不得进入执行阶段

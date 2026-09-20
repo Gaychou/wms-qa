@@ -172,6 +172,9 @@ DEFAULT_SPEC_TASK_TARGET_RATIO = {"unit": 0.60, "integration": 0.20, "api": 0.15
 DEFAULT_SPEC_TASK_MIN_BY_PRIORITY = {"P0": 8, "P1": 5, "P2": 3, "P3": 1}
 MOJIBAKE_TEXT_EXTENSIONS = {
     ".cjs",
+    ".cs",
+    ".csproj",
+    ".sln",
     ".css",
     ".csv",
     ".html",
@@ -222,6 +225,11 @@ MOJIBAKE_PROBES = [
 ]
 TECHNICAL_CASE_TOKENS = {
     "maven",
+    "dotnet",
+    "msbuild",
+    "xunit",
+    "nunit",
+    "mstest",
     "surefire",
     "vitest",
     "node:test",
@@ -890,6 +898,7 @@ def find_files(repo: Path, names: set[str], suffixes: tuple[str, ...] = ()) -> l
     return sorted(found)
 
 
+
 def detect_stack(repo: Path) -> dict[str, Any]:
     manifests = find_files(
         repo,
@@ -907,13 +916,15 @@ def detect_stack(repo: Path) -> dict[str, Any]:
             "next.config.js",
             "next.config.ts",
         },
+        suffixes=(".csproj", ".sln"),
     )
     stacks: list[str] = []
     summaries: list[dict[str, Any]] = []
     for manifest in manifests:
         rel = str(manifest.relative_to(repo)).replace("\\", "/")
-        text = read_text(manifest, 20000)
+        text = read_text(manifest, 30000)
         summary: dict[str, Any] = {"path": rel}
+
         if manifest.name == "package.json":
             try:
                 pkg = json.loads(text)
@@ -921,6 +932,7 @@ def detect_stack(repo: Path) -> dict[str, Any]:
                 scripts = pkg.get("scripts", {})
                 summary.update(
                     {
+                        "kind": "npm",
                         "name": pkg.get("name"),
                         "scripts": scripts,
                         "dependencies": sorted(deps.keys()),
@@ -933,12 +945,68 @@ def detect_stack(repo: Path) -> dict[str, Any]:
                         stacks.append(key)
             except json.JSONDecodeError:
                 summary["parseError"] = "invalid package.json"
+
         elif manifest.name == "pom.xml":
             summary["kind"] = "maven"
+            stacks.append("java")
             if "spring-boot" in text:
                 stacks.append("spring-boot")
             if "junit" in text or "spring-boot-starter-test" in text:
                 stacks.append("junit")
+
+        elif manifest.suffix.lower() == ".csproj":
+            kind = "dotnet"
+            framework = ""
+            sdk = ""
+            references: list[str] = []
+            try:
+                root = ET.parse(manifest).getroot()
+                sdk = str(root.attrib.get("Sdk") or "")
+                values: dict[str, str] = {}
+                for elem in root.iter():
+                    tag = elem.tag.rsplit("}", 1)[-1]
+                    value = (elem.text or "").strip()
+                    if tag in {"AssemblyName", "TargetFramework", "TargetFrameworks", "TargetFrameworkVersion"} and value:
+                        values.setdefault(tag, value)
+                    if tag in {"PackageReference", "Reference"}:
+                        include = str(elem.attrib.get("Include") or elem.attrib.get("Update") or "").strip()
+                        if include:
+                            references.append(include.split(",", 1)[0])
+                framework = (
+                    values.get("TargetFramework")
+                    or values.get("TargetFrameworks", "").split(";")[0]
+                    or values.get("TargetFrameworkVersion")
+                    or ""
+                )
+                if values.get("TargetFrameworkVersion") and not sdk:
+                    kind = "dotnet-framework"
+            except (ET.ParseError, OSError):
+                summary["parseError"] = "invalid csproj"
+
+            summary.update(
+                {
+                    "kind": kind,
+                    "name": manifest.stem,
+                    "framework": framework,
+                    "sdk": sdk,
+                    "references": sorted(references),
+                }
+            )
+            stacks.append(kind)
+            ref_lc = {item.lower() for item in references}
+            if "microsoft.net.sdk.web" in sdk.lower() or "microsoft.aspnetcore" in text.lower():
+                stacks.append("aspnet-core")
+            if "xunit" in ref_lc:
+                stacks.append("xunit")
+            if "nunit" in ref_lc or "nunit.framework" in ref_lc:
+                stacks.append("nunit")
+            if "mstest.testframework" in ref_lc or "microsoft.visualstudio.qualitytools.unittestframework" in ref_lc:
+                stacks.append("mstest")
+
+        elif manifest.suffix.lower() == ".sln":
+            summary["kind"] = "dotnet-solution"
+            stacks.append("dotnet-solution")
+
         elif manifest.name.startswith("playwright.config"):
             summary["kind"] = "playwright"
             stacks.append("playwright")
@@ -952,9 +1020,10 @@ def detect_stack(repo: Path) -> dict[str, Any]:
             stacks.append("python")
             if "pytest" in text:
                 stacks.append("pytest")
-        summaries.append(summary)
-    return {"stacks": sorted(set(stacks)), "manifests": summaries}
 
+        summaries.append(summary)
+
+    return {"stacks": sorted(set(stacks)), "manifests": summaries}
 
 def rel_path(path: Path, root: Path) -> str:
     return str(path.relative_to(root)).replace("\\", "/")
@@ -1035,70 +1104,157 @@ def _find_playwright_config(proj: Path) -> str:
     return ""
 
 
+
 def detect_project_test_profile(repo: Path) -> dict[str, Any]:
-    """通用探测项目测试套件：扫描 pom.xml/package.json 子目录，识别前后端测试。"""
+    """通用探测 Maven/npm/.NET/.NET Framework 测试套件。"""
     suites: list[dict[str, Any]] = []
     commands: dict[str, list[str]] = {"unit": [], "api": [], "integration": [], "e2e": [], "review": []}
+    from qa_core.project_manifest import discover_projects
 
-    for proj in _find_project_dirs(repo):
-        rel = str(proj.relative_to(repo)).replace("\\", "/")
-        sid = proj.name
+    def repo_rel(path: Path) -> str:
+        try:
+            rel = path.resolve().relative_to(repo.resolve()).as_posix()
+            return rel or "."
+        except ValueError:
+            return path.as_posix()
 
-        # 后端（pom.xml）
-        if (proj / "pom.xml").exists():
+    for project in discover_projects(repo):
+        proj = project.root
+        rel = repo_rel(proj)
+        sid = project.name
+
+        if project.kind == "maven":
             java_tests = list_existing_patterns(proj, ["src/test/java/**/*.java"])
             compile_cmd = f"cd {rel} && mvn -q -DskipTests compile"
             commands["api"].append(compile_cmd)
             test_cmd = f"cd {rel} && mvn -q test -DskipITs" if java_tests else None
             if test_cmd:
                 commands["integration"].append(test_cmd)
-            suites.append({
-                "name": f"{sid}-junit",
-                "root": rel,
-                "framework": "maven/junit",
-                "layer": "backend-unit+integration",
-                "testDir": "src/test/java",
-                "testFilesCount": len(java_tests),
-                "compileCommand": compile_cmd,
-                "testCommand": test_cmd,
-                "targetedCommandPattern": f"cd {rel} && mvn -q -Dtest=<ClassName> test",
-            })
+            suites.append(
+                {
+                    "name": f"{sid}-junit",
+                    "root": rel,
+                    "framework": "maven/junit",
+                    "layer": "backend-unit+integration",
+                    "testDir": "src/test/java",
+                    "testFilesCount": len(java_tests),
+                    "compileCommand": compile_cmd,
+                    "testCommand": test_cmd,
+                    "targetedCommandPattern": f"cd {rel} && mvn -q -Dtest=<ClassName> test",
+                }
+            )
             continue
 
-        # 前端（package.json）
-        if not (proj / "package.json").exists():
+        if project.kind in {"dotnet", "dotnet-framework"}:
+            manifest = project.manifest
+            if not manifest:
+                candidates = sorted(proj.glob("*.csproj"))
+                manifest = candidates[0] if candidates else None
+            if not manifest:
+                continue
+
+            manifest = Path(manifest)
+            manifest_rel = repo_rel(manifest)
+            csproj_text = read_text(manifest, 30000)
+            lower = csproj_text.lower()
+            framework_name = project.kind
+            if "xunit" in lower:
+                framework_name = "dotnet/xunit"
+            elif "nunit" in lower:
+                framework_name = "dotnet/nunit"
+            elif "mstest.testframework" in lower or "microsoft.visualstudio.qualitytools.unittestframework" in lower:
+                framework_name = "dotnet/mstest"
+
+            cs_tests = []
+            for candidate in proj.rglob("*.cs"):
+                if any(part.lower() in {"bin", "obj", ".git", ".vs"} for part in candidate.parts):
+                    continue
+                if "test" in candidate.name.lower() or any(part.lower() in {"test", "tests"} for part in candidate.parts):
+                    cs_tests.append(repo_rel(candidate))
+
+            if project.kind == "dotnet":
+                compile_cmd = f'dotnet build "{manifest_rel}" --nologo'
+                test_cmd = (
+                    f'dotnet test "{manifest_rel}" --nologo'
+                    if project.is_test or "microsoft.net.test.sdk" in lower
+                    else None
+                )
+                targeted = f'dotnet test "{manifest_rel}" --nologo --filter "FullyQualifiedName~<TestName>"'
+            else:
+                compile_cmd = f'msbuild "{manifest_rel}" /t:Build /m /p:Configuration=Debug'
+                test_cmd = None
+                targeted = (
+                    'msbuild "<test-project.csproj>" /t:Build /m /p:Configuration=Debug '
+                    '&& vstest.console.exe "<test-assembly.dll>" /Tests:<TestName>'
+                )
+
+            commands["api"].append(compile_cmd)
+            if test_cmd:
+                commands["unit"].append(test_cmd)
+                commands["integration"].append(test_cmd)
+
+            suites.append(
+                {
+                    "name": f"{sid}-dotnet",
+                    "root": rel,
+                    "manifest": manifest_rel,
+                    "framework": framework_name,
+                    "targetFramework": project.framework,
+                    "projectKind": project.kind,
+                    "layer": "backend-unit+integration",
+                    "testFiles": sorted(dict.fromkeys(cs_tests)),
+                    "testFilesCount": len(cs_tests),
+                    "compileCommand": compile_cmd,
+                    "testCommand": test_cmd,
+                    "targetedCommandPattern": targeted,
+                }
+            )
             continue
-        unit_files = list_existing_patterns(proj, ["src/**/*.test.*", "src/**/*.spec.*", "tests/**/*.test.*", "tests/**/*.spec.*"])
+
+        if project.kind != "npm" or not (proj / "package.json").exists():
+            continue
+
+        unit_files = list_existing_patterns(
+            proj,
+            ["src/**/*.test.*", "src/**/*.spec.*", "tests/**/*.test.*", "tests/**/*.spec.*"],
+        )
         if package_script(proj, "test") and unit_files:
             cmd = f"cd {rel} && npm run test"
             commands["unit"].append(cmd)
-            suites.append({
-                "name": f"{sid}-unit",
-                "root": rel,
-                "framework": _detect_js_test_framework(proj),
-                "layer": "frontend-unit",
-                "testFiles": unit_files,
-                "command": cmd,
-            })
+            suites.append(
+                {
+                    "name": f"{sid}-unit",
+                    "root": rel,
+                    "framework": _detect_js_test_framework(proj),
+                    "layer": "frontend-unit",
+                    "testFiles": unit_files,
+                    "command": cmd,
+                }
+            )
+
         pw_config = _find_playwright_config(proj)
         if pw_config:
             e2e_files = list_existing_patterns(proj, ["e2e/**/*.spec.*", "tests/e2e/**/*.spec.*"])
             list_cmd = f"cd {rel} && npx playwright test --list"
             commands["e2e"].append(list_cmd)
-            suites.append({
-                "name": f"{sid}-e2e",
-                "root": rel,
-                "framework": "playwright",
-                "layer": "e2e",
-                "config": pw_config,
-                "testFiles": e2e_files,
-                "listCommand": list_cmd,
-                "runtimeCommand": f"cd {rel} && npx playwright test",
-                "status": "ready" if e2e_files else "no-tests-found",
-            })
+            suites.append(
+                {
+                    "name": f"{sid}-e2e",
+                    "root": rel,
+                    "framework": "playwright",
+                    "layer": "e2e",
+                    "config": pw_config,
+                    "testFiles": e2e_files,
+                    "listCommand": list_cmd,
+                    "runtimeCommand": f"cd {rel} && npx playwright test",
+                    "status": "ready" if e2e_files else "no-tests-found",
+                }
+            )
+
+    for key in commands:
+        commands[key] = list(dict.fromkeys(commands[key]))
 
     return {"suites": suites, "commands": commands}
-
 
 def detect_base_branch(repo: Path) -> str:
     branches = git_output(repo, ["branch", "--list", "master"]).strip()
@@ -3018,17 +3174,19 @@ def spec_task_focuses(case: dict[str, Any]) -> list[dict[str, str]]:
     return focuses
 
 
+
 def _resolve_task_project(case: dict[str, Any], layer: str, repo: Path) -> Any:
-    """解析 spec-task 的目标项目，返回 ProjectInfo（含 name/root/kind）。"""
+    """解析 spec-task 的目标项目，支持 Maven/npm/.NET/.NET Framework。"""
     if repo is None:
-        raise QaAgentError("生成 spec-task 必须提供 --repo，以便从 pom.xml/package.json 识别目标项目")
+        raise QaAgentError(
+            "生成 spec-task 必须提供 --repo，以便从 pom.xml/package.json/*.csproj 识别目标项目"
+        )
     from qa_core.project_manifest import ProjectDiscoveryError, resolve_target_project
 
     try:
         return resolve_target_project(repo, case, layer)
     except ProjectDiscoveryError as exc:
         raise QaAgentError(str(exc)) from exc
-
 
 def _project_display_name(project: Any, repo: Path) -> str:
     try:
@@ -3042,51 +3200,124 @@ def target_project_for_task(case: dict[str, Any], layer: str, repo: Path | None 
     return _project_display_name(project, repo)
 
 
-def target_file_for_task(case: dict[str, Any], layer: str, target_project: str, task_index: int, project_kind: str = "maven") -> str:
+
+def target_file_for_task(
+    case: dict[str, Any],
+    layer: str,
+    target_project: str,
+    task_index: int,
+    project_kind: str = "maven",
+) -> str:
     slug = spec_slug(str(case.get("module") or case.get("title") or case.get("id")))
+    class_slug = "".join(part.capitalize() for part in slug.split("-")) or "BusinessFlow"
     is_maven = project_kind == "maven"
+    is_dotnet = project_kind in {"dotnet", "dotnet-framework"}
+    project_slug = re.sub(
+        r"[^A-Za-z0-9_.-]+",
+        "-",
+        target_project.strip("./\\") or "root",
+    ).strip("-") or "root"
+    dotnet_root = f"tests/dotnet/{project_slug}"
+
     if layer == "unit":
         if is_maven:
-            class_slug = "".join(part.capitalize() for part in slug.split("-")) or "BusinessFlow"
             return f"{target_project}/src/test/java/qa/{class_slug}Test.java"
+        if is_dotnet:
+            return f"{dotnet_root}/{class_slug}Tests.cs"
         return f"{target_project}/tests/{slug}.test.mjs"
+
     if layer == "integration":
         if is_maven:
-            return f"{target_project}/src/test/java/qa/{''.join(part.capitalize() for part in slug.split('-'))}IntegrationTest.java"
+            return f"{target_project}/src/test/java/qa/{class_slug}IntegrationTest.java"
+        if project_kind == "dotnet":
+            return f"{dotnet_root}/{class_slug}IntegrationTests.cs"
+        if project_kind == "dotnet-framework":
+            return f"tests/integration/{slug}/{str(case.get('id', '')).lower()}.ps1"
         return f"specs/integration/{slug}.spec.json"
+
     if layer == "api":
         if is_maven:
-            return f"{target_project}/src/test/java/qa/{''.join(part.capitalize() for part in slug.split('-'))}ApiTest.java"
+            return f"{target_project}/src/test/java/qa/{class_slug}ApiTest.java"
+        if is_dotnet:
+            return f"tests/api/{slug}/{str(case.get('id', '')).lower()}.ps1"
         return f"tests/api/{slug}/{str(case.get('id', '')).lower()}.sh"
+
     if layer == "e2e":
         module = str(case.get("module", slug))
         return f"tests/e2e/{module}/{str(case.get('id', '')).lower()}.spec.ts"
+
     return f"specs/{layer}/{slug}-{task_index}.json"
 
 
-def command_for_spec_task(layer: str, target_project: str, target_file: str, project_kind: str = "maven") -> str:
+def command_for_spec_task(
+    layer: str,
+    target_project: str,
+    target_file: str,
+    project_kind: str = "maven",
+) -> str:
     is_maven = project_kind == "maven"
-    # 显式覆盖 pom.xml 的 skipTests/maven.test.skip，避免「命令 exit 0 但 0 测试执行」的假通过
+    is_dotnet = project_kind == "dotnet"
+    is_framework = project_kind == "dotnet-framework"
+
     if layer == "unit":
         if is_maven:
             stem = Path(target_file).stem
-            return f"cd {target_project} && mvn -q \"-Dtest={stem}\" -DskipTests=false -Dmaven.test.skip=false test"
+            return (
+                f'cd {target_project} && mvn -q "-Dtest={stem}" '
+                "-DskipTests=false -Dmaven.test.skip=false test"
+            )
+        if is_dotnet:
+            test_dir = str(Path(target_file).parent).replace("\\", "/")
+            return (
+                f'dotnet test "{test_dir}/MingQa.Tests.csproj" --nologo '
+                f'--filter "FullyQualifiedName~{Path(target_file).stem}"'
+            )
+        if is_framework:
+            test_dir = str(Path(target_file).parent).replace("\\", "/")
+            return (
+                f'msbuild "{test_dir}/MingQa.Tests.csproj" /t:Build /m /p:Configuration=Debug '
+                f'&& vstest.console.exe "{test_dir}/bin/Debug/net48/MingQa.Tests.dll" '
+                f'/Tests:{Path(target_file).stem}'
+            )
         rel = target_file.replace(target_project + "/", "./")
         return f"cd {target_project} && node --test {rel}"
+
     if layer == "integration":
         if is_maven:
             stem = Path(target_file).stem
-            return f"cd {target_project} && mvn -q \"-Dtest={stem}\" -DskipTests=false -Dmaven.test.skip=false test"
+            return (
+                f'cd {target_project} && mvn -q "-Dtest={stem}" '
+                "-DskipTests=false -Dmaven.test.skip=false test"
+            )
+        if is_dotnet:
+            test_dir = str(Path(target_file).parent).replace("\\", "/")
+            return (
+                f'dotnet test "{test_dir}/MingQa.Tests.csproj" --nologo '
+                f'--filter "FullyQualifiedName~{Path(target_file).stem}"'
+            )
+        if is_framework:
+            return (
+                f'powershell -NoProfile -ExecutionPolicy Bypass -File "{target_file}"'
+            )
         return f"ming-qa manual integration execution for {target_file}"
+
     if layer == "api":
         if is_maven:
             stem = Path(target_file).stem
-            return f"cd {target_project} && mvn -q \"-Dtest={stem}\" -DskipTests=false -Dmaven.test.skip=false test"
+            return (
+                f'cd {target_project} && mvn -q "-Dtest={stem}" '
+                "-DskipTests=false -Dmaven.test.skip=false test"
+            )
+        if is_dotnet or is_framework:
+            return (
+                f'powershell -NoProfile -ExecutionPolicy Bypass -File "{target_file}"'
+            )
         return f"bash {target_file}"
+
     if layer == "e2e":
         return f"ming-qa run-e2e --repo . --spec {target_file}"
-    return ""
 
+    return ""
 
 def _append_unique(values: list[str], item: str) -> None:
     if item and item not in values:
@@ -3931,6 +4162,55 @@ def has_meaningful_evidence(task: dict[str, Any]) -> bool:
     return not any(hint in text for hint in _MANUAL_VERIFY_HINTS)
 
 
+def task_execution_mode(task: dict[str, Any]) -> str:
+    """Best-effort extraction of the execution evidence mode.
+
+    Older task files may not have this field, so absence remains backward-compatible.
+    When a mode is explicitly present, completion must respect it.
+    """
+    candidates: list[Any] = [
+        task.get("executionMode"),
+        task.get("execution_mode"),
+    ]
+    result = task.get("result")
+    if isinstance(result, dict):
+        candidates.extend([result.get("executionMode"), result.get("execution_mode")])
+    evidence = task.get("evidence")
+    if isinstance(evidence, dict):
+        candidates.extend([evidence.get("executionMode"), evidence.get("execution_mode")])
+    elif isinstance(evidence, list):
+        for item in evidence:
+            if isinstance(item, dict):
+                candidates.extend([item.get("executionMode"), item.get("execution_mode")])
+    for value in candidates:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def task_has_real_execution(task: dict[str, Any]) -> bool:
+    """Reject explicit static/simulation/uncovered evidence from satisfying completion.
+
+    Missing executionMode is kept compatible with historical real test tasks. Once a
+    task declares its mode, clearly non-runtime modes cannot be counted as verified.
+    """
+    mode = task_execution_mode(task).strip().lower().replace("-", "_").replace(" ", "_")
+    if not mode:
+        return True
+    non_real_prefixes = (
+        "simulation",
+        "static",
+        "uncovered",
+        "not_covered",
+        "code_review",
+        "source_review",
+        "logic_simulation",
+        "algorithm_simulation",
+    )
+    return not mode.startswith(non_real_prefixes)
+
+
 def has_required_task_mapping(task: dict[str, Any]) -> bool:
     return all(
         meaningful_value(task.get(key))
@@ -3961,42 +4241,62 @@ def is_placeholder_stub(path: Path) -> bool:
     return bool(re.search(r'echo\s+["\']?BLOCKED', text)) and "exit 0" in text
 
 
+
 def count_test_methods(path: Path) -> int:
-    """统计测试文件里可发现的测试方法数：Java 数 @Test；脚本非占位即算 1。"""
-    if path.suffix.lower() == ".java":
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return 0
+    """统计 Java/C# 测试方法；脚本非占位即算 1。"""
+    suffix = path.suffix.lower()
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+
+    if suffix == ".java":
         return len(re.findall(r"@Test\b", text))
+    if suffix == ".cs":
+        attrs = re.findall(
+            r"\[(?:Fact|Theory|Test|TestCase(?:\([^]]*\))?|TestMethod|DataTestMethod)\b[^\]]*\]",
+            text,
+        )
+        return len(attrs)
+
     return 0 if is_placeholder_stub(path) else 1
 
 
 def discover_test_method_names(path: Path) -> set[str] | None:
-    """提取测试文件里真实存在的测试方法名。
-
-    Java 返回 @Test 标注的方法名；其它类型（Playwright spec 等）的「方法名」概念
-    不同，返回 None 表示该文件只能按数量校验。
-
-    只做数量校验是抓不住「映射≠实现」的：54 个 task 映射到一个只有 7 个 @Test 的
-    文件，只要补到 8 个方法就能蒙混过关，而那 8 个是不是对应的断言没人知道。
-    """
-    if path.suffix.lower() != ".java":
+    """提取 Java/C# 测试方法名；其它脚本只做数量/占位校验。"""
+    suffix = path.suffix.lower()
+    if suffix not in {".java", ".cs"}:
         return None
+
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return set()
 
     names: set[str] = set()
-    for match in re.finditer(r"@Test\b", text):
-        # @Test 与方法签名之间可能隔着 @DisplayName 等注解，向后扫一段
-        tail = text[match.end(): match.end() + 600]
-        signature = re.search(r"\bvoid\s+([A-Za-z_$][\w$]*)\s*\(", tail)
+    if suffix == ".java":
+        for match in re.finditer(r"@Test\b", text):
+            tail = text[match.end(): match.end() + 600]
+            signature = re.search(r"\bvoid\s+([A-Za-z_$][\w$]*)\s*\(", tail)
+            if signature:
+                names.add(signature.group(1))
+        return names
+
+    attr_re = re.compile(
+        r"\[(?:Fact|Theory|Test|TestCase(?:\([^]]*\))?|TestMethod|DataTestMethod)\b[^\]]*\]"
+    )
+    method_re = re.compile(
+        r"\b(?:public|internal|protected|private)?\s*"
+        r"(?:static\s+)?(?:async\s+)?"
+        r"(?:Task(?:<[^>]+>)?|ValueTask(?:<[^>]+>)?|void)\s+"
+        r"([A-Za-z_]\w*)\s*\("
+    )
+    for match in attr_re.finditer(text):
+        tail = text[match.end(): match.end() + 1000]
+        signature = method_re.search(tail)
         if signature:
             names.add(signature.group(1))
     return names
-
 
 def assert_script_implementation_data(spec_tasks_data: dict[str, Any], repo: Path) -> dict[str, Any]:
     """脚本实现真实性门禁：映射到文件 ≠ 实现了测试。
@@ -4179,7 +4479,9 @@ def assert_completion_data(
         # 用例层 verified 闸门：至少一个 task 真实执行通过（passed + 有执行证据），否则该用例业务未被验证。
         # 全部 blocked / 未实现 / 未执行 = 未验证，门禁必须 fail，不允许 complete_with_allowed_gaps。
         verified = any(
-            normalize_task_status(t.get("executionStatus")) == "passed" and has_meaningful_evidence(t)
+            normalize_task_status(t.get("executionStatus")) == "passed"
+            and has_meaningful_evidence(t)
+            and task_has_real_execution(t)
             for t in case_tasks
         )
         if not verified:
@@ -4190,7 +4492,7 @@ def assert_completion_data(
                     "sourceCaseId": case_id,
                     "priority": priority,
                     "title": case.get("title"),
-                    "message": "该用例没有任何 task 真实执行通过（全部 blocked/未实现/未执行），业务未被验证",
+                    "message": "该用例没有任何 task 具备真实执行通过证据；static/simulation/uncovered 不能满足 verified 门禁",
                 }
             )
 
@@ -4205,6 +4507,7 @@ def assert_completion_data(
         "failed": 0,
         "unimplemented": 0,
         "unexecuted": 0,
+        "nonRealPassed": 0,
     }
     for task in tasks:
         if not isinstance(task, dict):
@@ -4253,7 +4556,17 @@ def assert_completion_data(
             continue
 
         if execution_status == "passed":
-            counters["executed"] += 1
+            if task_has_real_execution(task):
+                counters["executed"] += 1
+            else:
+                counters["nonRealPassed"] += 1
+                findings.append({
+                    "type": "passed-task-non-real-execution",
+                    "severity": "fail",
+                    "executionMode": task_execution_mode(task),
+                    "message": "static/simulation/uncovered 证据不能把业务 task 标记为 passed",
+                    **status_pair,
+                })
             if not has_required_task_mapping(task):
                 findings.append({"type": "passed-task-missing-mapping", "severity": "fail", **status_pair})
             if not has_meaningful_evidence(task):
@@ -5456,44 +5769,107 @@ def write_json_if_needed(path: Path, data: Any, *, force: bool = False) -> bool:
     return True
 
 
-def infer_service_examples(repo: Path) -> list[dict[str, Any]]:
-    """自动推导项目中的服务配置，包括启动命令和就绪信号。
 
-    在仓库子目录中搜索 pom.xml / package.json，按框架类型识别前后端服务，
-    填充 dir / startCmd / readySignal / healthUrl 字段。未找到时回退到纯模板（无 startCmd）。
-    """
+def infer_service_examples(repo: Path) -> list[dict[str, Any]]:
+    """自动推导 Spring/npm/ASP.NET Core；经典 .NET Framework/IIS 只生成配置模板。"""
     services: list[dict[str, Any]] = []
     project_dirs = _find_project_dirs(repo)
 
-    # 后端: 找包含 pom.xml 且有 spring-boot-maven-plugin 的目录
     for proj in project_dirs:
         pom = proj / "pom.xml"
         if not pom.exists():
             continue
-        full_text = ""
-        try:
-            full_text = pom.read_text(encoding="utf-8")
-        except Exception:
-            pass
+        full_text = read_text(pom, 30000)
         if "spring-boot-maven-plugin" not in full_text:
             continue
         rel = str(proj.relative_to(repo)).replace("\\", "/")
         service_id = _derive_service_id(proj, default="api")
-        # 从 application.yml 推导端口
         port = _find_app_port(proj, default=8080)
-        health_path = _find_health_path(proj)
-        services.append({
-            "id": service_id,
-            "baseUrlEnv": "QA_API_BASE_URL",
-            "required": False,
-            "scope": ["api", "integration"],
-            "dir": rel,
-            "startCmd": "mvn spring-boot:run",
-            "readySignal": "Started",
-            "defaultUrl": f"http://127.0.0.1:{port}",
-        })
+        services.append(
+            {
+                "id": service_id,
+                "baseUrlEnv": "QA_API_BASE_URL",
+                "required": False,
+                "scope": ["api", "integration"],
+                "dir": rel,
+                "startCmd": "mvn spring-boot:run",
+                "readySignal": "Started",
+                "defaultUrl": f"http://127.0.0.1:{port}",
+            }
+        )
 
-    # 前端: 找包含 package.json 且有 next dev / vite dev 等脚本的目录
+    for proj in project_dirs:
+        for csproj in sorted(proj.glob("*.csproj")):
+            text = read_text(csproj, 30000)
+            lower = text.lower()
+            legacy = "<targetframeworkversion>" in lower and "<project sdk=" not in lower
+            is_web = (
+                "microsoft.net.sdk.web" in lower
+                or "microsoft.aspnetcore" in lower
+                or "system.web" in lower
+                or "system.servicemodel" in lower
+            )
+            if not is_web:
+                continue
+
+            rel = str(proj.relative_to(repo)).replace("\\", "/")
+            service_id = _derive_service_id(proj, default="api")
+
+            if legacy:
+                services.append(
+                    {
+                        "id": service_id,
+                        "baseUrlEnv": "QA_API_BASE_URL",
+                        "required": False,
+                        "scope": ["api", "integration"],
+                        "dir": rel,
+                        "startCmd": "",
+                        "readySignal": "",
+                        "hosting": "iis",
+                        "defaultUrl": "http://127.0.0.1",
+                        "note": (
+                            ".NET Framework/IIS 项目不自动 dotnet run；"
+                            "请在 services.local.json 配置真实 IIS URL。"
+                        ),
+                    }
+                )
+                continue
+
+            port = 5000
+            launch = proj / "Properties" / "launchSettings.json"
+            if launch.exists():
+                try:
+                    data = json.loads(launch.read_text(encoding="utf-8"))
+                    profiles = data.get("profiles", {}) if isinstance(data, dict) else {}
+                    for profile in profiles.values():
+                        url = (
+                            str(profile.get("applicationUrl", ""))
+                            if isinstance(profile, dict)
+                            else ""
+                        )
+                        match = re.search(
+                            r"https?://(?:localhost|127\.0\.0\.1):(\d+)",
+                            url,
+                        )
+                        if match:
+                            port = int(match.group(1))
+                            break
+                except Exception:
+                    pass
+
+            services.append(
+                {
+                    "id": service_id,
+                    "baseUrlEnv": "QA_API_BASE_URL",
+                    "required": False,
+                    "scope": ["api", "integration"],
+                    "dir": rel,
+                    "startCmd": f'dotnet run --no-launch-profile --project "{csproj.name}"',
+                    "readySignal": "Now listening on",
+                    "defaultUrl": f"http://127.0.0.1:{port}",
+                }
+            )
+
     for proj in project_dirs:
         pkg = proj / "package.json"
         if not pkg.exists():
@@ -5502,14 +5878,15 @@ def infer_service_examples(repo: Path) -> list[dict[str, Any]]:
             data = json.loads(pkg.read_text(encoding="utf-8"))
         except Exception:
             continue
+
         deps = {**data.get("dependencies", {}), **data.get("devDependencies", {})}
         scripts = data.get("scripts", {})
         is_next = "next" in deps
         is_react = "react" in deps or "vite" in deps
         if not (is_next or is_react):
             continue
+
         rel = str(proj.relative_to(repo)).replace("\\", "/")
-        # 确定服务 ID
         lower_rel = rel.lower()
         if "h5" in lower_rel or "web" in lower_rel or "front" in lower_rel:
             service_id = "web"
@@ -5517,50 +5894,94 @@ def infer_service_examples(repo: Path) -> list[dict[str, Any]]:
             service_id = "admin"
         else:
             service_id = "web"
-        # 确定启动命令
+
         start_cmd = ""
         ready_signal = ""
         if "dev" in scripts:
             start_cmd = "npm run dev"
         elif "start" in scripts:
             start_cmd = "npm run start"
+
         if is_next:
             ready_signal = "Ready in"
         elif is_react:
             ready_signal = "Local:"
+
         port = _find_frontend_port(proj, scripts, data, default=3000)
-        services.append({
-            "id": service_id,
+        services.append(
+            {
+                "id": service_id,
+                "baseUrlEnv": "QA_WEB_BASE_URL",
+                "required": True,
+                "scope": ["e2e"],
+                "dir": rel,
+                "startCmd": start_cmd,
+                "readySignal": ready_signal,
+                "defaultUrl": f"http://127.0.0.1:{port}",
+            }
+        )
+
+    if services:
+        unique: list[dict[str, Any]] = []
+        seen: set[tuple[str, str]] = set()
+        for service in services:
+            key = (str(service.get("id", "")), str(service.get("dir", "")))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(service)
+        return unique
+
+    return [
+        {
+            "id": "web",
             "baseUrlEnv": "QA_WEB_BASE_URL",
             "required": True,
             "scope": ["e2e"],
-            "dir": rel,
-            "startCmd": start_cmd,
-            "readySignal": ready_signal,
-            "defaultUrl": f"http://127.0.0.1:{port}",
-        })
-
-    if services:
-        return services
-    # 回退: 空白模板
-    return [
-        {"id": "web", "baseUrlEnv": "QA_WEB_BASE_URL",
-         "required": True, "scope": ["e2e"], "dir": "", "startCmd": "", "readySignal": "", "defaultUrl": "http://127.0.0.1:3000"},
-        {"id": "api", "baseUrlEnv": "QA_API_BASE_URL",
-         "required": False, "scope": ["api", "integration"], "dir": "", "startCmd": "", "readySignal": "", "defaultUrl": "http://127.0.0.1:8080"},
+            "dir": "",
+            "startCmd": "",
+            "readySignal": "",
+            "defaultUrl": "http://127.0.0.1:3000",
+        },
+        {
+            "id": "api",
+            "baseUrlEnv": "QA_API_BASE_URL",
+            "required": False,
+            "scope": ["api", "integration"],
+            "dir": "",
+            "startCmd": "",
+            "readySignal": "",
+            "defaultUrl": "http://127.0.0.1:8080",
+        },
     ]
 
-
 def _find_project_dirs(repo: Path) -> list[Path]:
-    """找到仓库中所有可能是独立项目的子目录（含 pom.xml 或 package.json）。"""
+    """找到 Maven/npm/.NET 项目目录，兼容大型多层解决方案。"""
     dirs: list[Path] = []
-    for entry in sorted(repo.iterdir()):
-        if not entry.is_dir() or entry.name.startswith(".") or entry.name == "node_modules":
-            continue
-        if (entry / "pom.xml").exists() or (entry / "package.json").exists():
-            dirs.append(entry)
-    return dirs
+    ignored = ignored_dir_names()
+    base_depth = len(repo.resolve().parts)
 
+    for root, child_dirs, names in os.walk(repo):
+        root_path = Path(root)
+        depth = len(root_path.resolve().parts) - base_depth
+        if depth > 8:
+            child_dirs[:] = []
+            continue
+
+        child_dirs[:] = [
+            name
+            for name in child_dirs
+            if name not in ignored and not name.startswith(".")
+        ]
+
+        if (
+            "pom.xml" in names
+            or "package.json" in names
+            or any(name.lower().endswith(".csproj") for name in names)
+        ):
+            dirs.append(root_path)
+
+    return sorted(dict.fromkeys(dirs))
 
 def _find_app_port(proj: Path, default: int = 8080) -> int:
     """从 Spring Boot application*.yml 中读取 server.port。仅匹配显式的 server.port 配置行。"""
@@ -5665,6 +6086,8 @@ _RUNNER_RUNTIME = {
     "mvn": "maven", "mvn.cmd": "maven", "mvnw": "maven", "mvnw.cmd": "maven",
     "npm": "node", "npm.cmd": "node", "npx": "node", "npx.cmd": "node",
     "node": "node", "node.exe": "node",
+    "dotnet": "dotnet", "dotnet.exe": "dotnet",
+    "msbuild": "msbuild", "msbuild.exe": "msbuild",
     "yarn": "node", "yarn.cmd": "node", "pnpm": "node", "pnpm.cmd": "node",
 }
 
@@ -6357,27 +6780,40 @@ def _record_run_sidecar(repo: Path, case_id: str, task_id: str, script_name: str
     print(f"[ming-qa] 日志: {log_path}")
 
 
+
 def interpreter_argv_for_script(script_path: Path) -> list[str]:
-    """按扩展名选解释器。
-
-    历史缺陷：这里一律用 bash 执行，不看扩展名。`.py` 脚本因此被 bash 当 shell 解析，
-    报「import: command not found」「syntax error near unexpected token '('」——使用者
-    只能自己再写一层 `.sh` 包装来 exec python。
-
-    `.py` 用跑本 CLI 的那个解释器（`sys.executable`），而不是 PATH 里的 `python`：
-    后者在 Windows 上可能是 Microsoft Store 的占位程序（静默无输出）。
-    未知扩展名仍按 shell 脚本处理，保持既有行为。
-    """
+    """按扩展名选择 Python/Node/PowerShell/shell 解释器。"""
     suffix = script_path.suffix.lower()
+
     if suffix == ".py":
         return [sys.executable or "python", str(script_path)]
+
     if suffix in {".js", ".mjs", ".cjs"}:
         node = shutil.which("node")
         if not node:
             raise QaAgentError(f"{suffix} 脚本需要 Node.js，但 PATH 里找不到 node")
         return [node, str(script_path)]
-    return [shutil.which("bash") or "bash", str(script_path)]
 
+    if suffix == ".ps1":
+        powershell = (
+            shutil.which("pwsh")
+            or shutil.which("powershell")
+            or shutil.which("powershell.exe")
+        )
+        if not powershell:
+            raise QaAgentError(
+                ".ps1 脚本需要 PowerShell，但 PATH 里找不到 pwsh/powershell"
+            )
+        return [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script_path),
+        ]
+
+    return [shutil.which("bash") or "bash", str(script_path)]
 
 def run_with_env(args: argparse.Namespace) -> None:
     """分层加载 config/env.shared → local/.env → CRLF→LF → 执行脚本 → 记录日志。
@@ -6749,6 +7185,27 @@ def doctor(args: argparse.Namespace) -> None:
         command_version("node", ["--version"]) if command_exists("node")
         else ("未找到；config/services.json 的启动命令依赖它" if "node" in runtime_needs else "not found"),
         required="node" in runtime_needs,
+    )
+    # DOTNET_ADAPTER_DOCTOR
+    add(
+        "dotnet",
+        command_exists("dotnet"),
+        command_version("dotnet", ["--version"]) if command_exists("dotnet")
+        else ("未找到；config/services.json 的启动命令依赖它" if "dotnet" in runtime_needs else "not found"),
+        required="dotnet" in runtime_needs,
+        next_action=("安装 .NET SDK" if "dotnet" in runtime_needs and not command_exists("dotnet") else ""),
+    )
+    msbuild_exe = shutil.which("msbuild") or shutil.which("MSBuild.exe")
+    add(
+        "msbuild",
+        bool(msbuild_exe),
+        msbuild_exe or "未找到；经典 .NET Framework 项目通常需要 Visual Studio Build Tools/MSBuild",
+        required="msbuild" in runtime_needs,
+        next_action=(
+            "安装 Visual Studio Build Tools，并确保 MSBuild.exe 在 PATH"
+            if "msbuild" in runtime_needs and not msbuild_exe
+            else ""
+        ),
     )
     add("npm", command_exists("npm"), command_version("npm", ["--version"]), required=False)
     add("npx", bool(find_npx()), find_npx() or "未找到；自动安装 Playwright Test Agents 需要 Node.js/npm", required=False)
