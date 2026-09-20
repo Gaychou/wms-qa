@@ -15,14 +15,23 @@ if ($QueryFile) {
 }
 
 $server = $env:QA_SQLSERVER_SERVER
+if (-not $server -and $env:QA_SQLSERVER_HOST) {
+    $server = $env:QA_SQLSERVER_HOST
+    if ($env:QA_SQLSERVER_PORT) {
+        $server = "$server,$($env:QA_SQLSERVER_PORT)"
+    }
+}
 $database = $env:QA_SQLSERVER_DATABASE
 $user = $env:QA_SQLSERVER_USER
 $password = $env:QA_SQLSERVER_PASSWORD
+if (-not $password) {
+    $password = $env:QA_SQLSERVER_PASS
+}
 $integrated = ($env:QA_SQLSERVER_INTEGRATED_SECURITY -eq "1")
 $trust = ($env:QA_SQLSERVER_TRUST_CERT -ne "0")
 
 if (-not $server -or -not $database) {
-    throw "QA_SQLSERVER_SERVER and QA_SQLSERVER_DATABASE are required."
+    throw "Set QA_SQLSERVER_SERVER (or QA_SQLSERVER_HOST + optional QA_SQLSERVER_PORT) and QA_SQLSERVER_DATABASE."
 }
 
 $writePattern = '(?is)\b(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|DROP|ALTER|CREATE|GRANT|REVOKE|DENY|EXEC(?:UTE)?|DBCC)\b'
@@ -47,7 +56,7 @@ if ($integrated) {
     $builder["Integrated Security"] = $true
 } else {
     if (-not $user -or -not $password) {
-        throw "Set QA_SQLSERVER_USER and QA_SQLSERVER_PASSWORD, or QA_SQLSERVER_INTEGRATED_SECURITY=1."
+        throw "Set QA_SQLSERVER_USER and QA_SQLSERVER_PASSWORD/QA_SQLSERVER_PASS, or QA_SQLSERVER_INTEGRATED_SECURITY=1."
     }
     $builder["User ID"] = $user
     $builder["Password"] = $password
