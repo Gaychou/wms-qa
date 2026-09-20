@@ -66,6 +66,14 @@ python "$QA_AGENT_DIR/scripts/qa_agent.py"assert-script-implementation --spec-t
 
 ### 4. 实现测试文件
 
+#### 禁止用“重写生产逻辑”替代真实集成路径
+
+脚本生成时先判断用例真正要验证哪一条产品链路。若用例目标是 WinForms 导出、WCF 调用、GemBox 文件生成等运行时行为：
+
+- 优先生成能触发**真实产品代码/二进制**的测试方式（测试宿主、反射/公开入口、现有客户端自动化、真实 WCF 调用等）。
+- 如果当前环境无法触发真实路径，将该 task 的 `implementationStatus` 保持为 `not-implemented` 或记录 blocker；不要写一个 Python/openpyxl 脚本去复制 C# SQL/DataTable/GemBox 逻辑后宣称“已实现 integration 测试”。
+- 允许额外生成 simulation 脚本用于验证源码推断，但必须作为独立的辅助 task，并在名称/evidence 中明确标注 `simulation`；它不能替代原 integration/e2e task，也不能满足真实路径 completion 要求。
+
 按照 spec-task 逐条实现测试脚本：
 
 - **api 层 task**：bash/PowerShell 脚本（curl/Invoke-RestMethod + JSON 断言）、JUnit 或 .NET 测试，直接调后端 API
